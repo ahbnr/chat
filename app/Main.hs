@@ -1,45 +1,83 @@
 module Main where
 
-import Lib
-import MulticastDiscovery
-import StdinTransmission
+import MulticastDiscovery (
+      pingListenerServiceUnsafe
+    , queryPool
+    , logID
+  )
 
-import Network.Socket
+import StdioTransmission (
+      prepareServerSock
+    , server
+    , client
+  )
 
-import System.Log.Logger
+import Network.Socket (
+      socketPort
+    , HostAddress
+    , hostAddressToTuple
+  )
 
-import Options.Applicative
+import GHC.Conc (atomically)
+import Control.Concurrent.STM.TMChan (
+      newTMChanIO
+    , dupTMChan
+    , newBroadcastTMChanIO
+  )
+
+import Conduit (
+      stdinC
+    , stdoutC
+    , (.|)
+    , runConduit
+  )
+import Data.Conduit.TMChan (
+      sinkTMChan
+    , sourceTMChan
+  )
+
+import Data.ByteString.Char8 (
+      pack
+    , unpack
+    , ByteString
+  )
+
+import System.Log.Logger (
+      debugM
+    , updateGlobalLogger
+    , setLevel
+    , Priority(DEBUG)
+  )
+
+import Options.Applicative (
+      Parser
+    , metavar
+    , header
+    , progDesc
+    , fullDesc
+    , helper
+    , info
+    , str
+    , argument
+    , short
+    , long
+    , help
+    , switch
+    , execParser
+  )
 import Data.Semigroup ((<>))
 import Data.List (intercalate, find)
-import Control.Monad
+
+import Control.Monad (when, void)
+import Control.Applicative ((<**>))
+
+import Control.Concurrent.Async (async, waitAny)
 
 data Options
-  = Options Bool Command
-
-data Command
-  = Connect String
-  | Listen String
-  | Client String
-  | Server String
-  deriving Show
+  = Options Bool String
 
 logID :: String
 logID = "Main"
-
-streamPort :: Int
-streamPort = 4000
-
-connectOptions :: Parser Command
-connectOptions = Connect <$> argument str (metavar "name")
-
-listenOptions :: Parser Command
-listenOptions = Listen <$> argument str (metavar "name")
-
-clientOptions :: Parser Command
-clientOptions = Client <$> argument str (metavar "address")
-
-serverOptions :: Parser Command
-serverOptions = Server <$> argument str (metavar "address")
 
 options :: Parser Options
 options = Options
@@ -48,16 +86,7 @@ options = Options
       <> short 'd'
       <> help "Print debugging logs"
     )
-  <*> subparser
-    (      command "connect"
-              (info connectOptions (progDesc "Chat with somebody"))
-        <> command "listen"
-              (info listenOptions (progDesc "Wait for incoming chats"))
-        <> command "client"
-              (info clientOptions (progDesc "Open a TCP connection"))
-        <> command "server"
-              (info serverOptions (progDesc "Wait for a TCP connection"))
-      )
+  <*> argument str (metavar "name")
 
 main :: IO ()
 main = processOptions =<< execParser opts
@@ -68,27 +97,74 @@ main = processOptions =<< execParser opts
      <> header "chat - commandline peer to peer chat" )
 
 processOptions :: Options -> IO ()
-processOptions (Options debugFlag cmd) = do
+processOptions (Options debugFlag name) = do
   when
     debugFlag 
     (do
         updateGlobalLogger MulticastDiscovery.logID (setLevel DEBUG)
         updateGlobalLogger Main.logID (setLevel DEBUG)
       )
-  processCommand cmd
+  initPeer name
 
-processCommand :: Command -> IO ()
-processCommand (Connect name) = do
+initPeer :: String -> IO ()
+initPeer name = do
+    -- preparing stdio channels
+    stdinChan <- newBroadcastTMChanIO
+    stdoutChan <- newTMChanIO
+
+    debugM Main.logID "Listening for incoming tcp connections..."
+
+    serverSock <- prepareServerSock "0.0.0.0" 0
+    tcpSock <- socketPort serverSock -- unsafe!
+
+    streamServer <- async (
+        server
+        serverSock
+        stdinChan
+        stdoutChan
+      )
+
+    debugM Main.logID "Listening for discovery udp pings..."
+    pingService <- async (pingListenerServiceUnsafe name tcpSock)
+
     results <- queryPool
     debugM
       Main.logID
       (concat ["Found the following peers: ", show results])
 
-    let maybeTarget = find ((== name) . fst) results
+    debugM
+      Main.logID
+      "Trying to connect to all found peers..."
 
-    case maybeTarget of
-      Just (name, remoteIp) -> client (addrToString remoteIp) streamPort
-      _ -> errorM Main.logID ("Cant find " ++ name)
+    (     sequence_
+        . map (\(_, remoteIp, tcpPort) -> do
+                  debugM
+                    Main.logID
+                    (concat ["Connecting to ", show remoteIp])
+
+                  clientStdinChan <- atomically (dupTMChan stdinChan)
+
+                  -- TODO wait for the client later!
+                  (void . async) (client
+                      (addrToString remoteIp)
+                      tcpPort
+                      (sourceTMChan clientStdinChan)
+                      (sinkTMChan stdoutChan)
+                    )
+                )
+        . filter (\(remoteName, _, _) -> remoteName /= name) -- dont connect to yourself
+      ) results
+
+    -- Enable stdio
+    async (
+        runConduit $ stdinC .| sinkTMChan stdinChan
+      )
+
+    async (
+        runConduit $ sourceTMChan stdoutChan .| stdoutC
+      )
+
+    (void . waitAny) [streamServer, pingService]
   where
     addrToString :: HostAddress -> String
     addrToString addr = 
@@ -96,13 +172,3 @@ processCommand (Connect name) = do
         intercalate
           "."
           [show a, show b, show c, show d]
-
-processCommand (Listen name) = do
-  -- updateGlobalLogger MulticastDiscovery.logID (setLevel DEBUG)
-  listenToPoolUnsafe name
-  debugM Main.logID "Building up connection..."
-  server "0.0.0.0" streamPort
-
-processCommand (Client addr) = client addr streamPort
-
-processCommand (Server addr) = server addr streamPort

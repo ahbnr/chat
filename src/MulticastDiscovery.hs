@@ -17,6 +17,8 @@ import Network.Socket (
     , SocketType(Datagram)
     , Family(AF_INET)
     , tupleToHostAddress
+    , Socket
+    , PortNumber
   )
 
 import Network.Socket.ByteString (sendTo, recvFrom)
@@ -28,7 +30,7 @@ import Utils (void, gatherInput, Microseconds)
 
 type Name = String
 data Request = Ping deriving (Show, Read)
-data Response = Pong String deriving (Show, Read)
+data Response = Pong String PortNumber deriving (Show, Read)
 
 poolGrp :: String
 poolGrp = "230.42.42.42"
@@ -53,7 +55,7 @@ sendPoolMsg msg = do
 
   close sock
 
-queryPool :: IO [(Name, HostAddress)]
+queryPool :: IO [(Name, HostAddress, PortNumber)]
 queryPool = do
     sock <- socket AF_INET Datagram defaultProtocol
 
@@ -67,11 +69,11 @@ queryPool = do
 
     (pure . catMaybes . map extractResponse) responses
   where
-    extractResponse :: (ByteString, SockAddr) -> Maybe (Name, HostAddress)
+    extractResponse :: (ByteString, SockAddr) -> Maybe (Name, HostAddress, PortNumber)
     extractResponse (msg, (SockAddrInet _ ip)) =
       case (read . unpack) msg :: Response of
-        Pong name -> Just (name, ip)
-        _         -> Nothing
+        Pong name port -> Just (name, ip, port)
+        _              -> Nothing
     extractResponse _ = Nothing
 
 listenForPingUnsafe :: IO (Maybe HostAddress)
@@ -80,41 +82,17 @@ listenForPingUnsafe = do
     logID
     (concat ["Trying to recv from ", show poolGrp, " on ", show listenPort])
 
-  (msg, remoteIp) <- bracket
+  bracket
     (multicastReceiver poolGrp listenPort)
     close
-    (\sock -> do
-        (msg, addr@(SockAddrInet _ remoteIp)) <- recvFrom sock 100
-
-        debugM
-          logID
-          (concat ["Received ", show msg, " from ", show addr])
-
-        pure (msg, remoteIp)
-      )
-  
-  let request = (readMaybe . unpack) msg :: Maybe Request
-
-  pure $ case request of
-    Just Ping -> Just remoteIp
-    _ -> Nothing
+    listenForPingUnsafe'
 
 respondToPingUnsafe :: Name -> HostAddress -> IO ()
 respondToPingUnsafe name remoteIp = do
-  let responseAddr = (SockAddrInet queryResponsePort remoteIp)
-
-  debugM
-    logID
-    (concat ["Sending response to ", show responseAddr])
-
   bracket
     (socket AF_INET Datagram defaultProtocol)
     close
-    (void . (\responseSock -> sendTo 
-        responseSock
-        ((pack . show . Pong) name)
-        responseAddr
-      ))
+    (\sock -> answerPingUnsafe sock name 4000 remoteIp)
 
 listenToPoolUnsafe :: Name -> IO()
 listenToPoolUnsafe name = do
@@ -123,3 +101,54 @@ listenToPoolUnsafe name = do
   case maybeRemoteIp of
     Just remoteIp -> respondToPingUnsafe name remoteIp
     _ -> pure ()
+
+listenForPingUnsafe' :: Socket -> IO (Maybe HostAddress)
+listenForPingUnsafe' sock = do
+  debugM
+    logID
+    "Listening for udp pings..."
+
+  (msg, addr@(SockAddrInet _ remoteIp)) <- recvFrom sock 100
+
+  debugM
+    logID
+    (concat ["Received ", show msg, " from ", show addr])
+  
+  let maybeRequest = (readMaybe . unpack) msg :: Maybe Request
+
+  pure $ case maybeRequest of
+    Just Ping -> Just remoteIp
+    _ -> Nothing
+
+answerPingUnsafe :: Socket -> Name -> PortNumber -> HostAddress -> IO ()
+answerPingUnsafe socket name tcpPort remoteIp = do
+  let responseAddr = (SockAddrInet queryResponsePort remoteIp)
+
+  debugM
+    logID
+    (concat ["Sending udp ping answer to ", show responseAddr])
+
+  void (
+      sendTo 
+        socket
+        ((pack . show) (Pong name tcpPort))
+        responseAddr
+    )
+
+pingListenerServiceUnsafe :: Name -> PortNumber -> IO()
+pingListenerServiceUnsafe name tcpPort = do
+  bracket
+    (multicastReceiver poolGrp listenPort)
+    close
+    (\sock ->
+        (sequence_ . repeat)
+          (do
+              maybeAddr <- listenForPingUnsafe' sock
+
+              maybe
+                (pure ())
+                (answerPingUnsafe sock name tcpPort)
+                maybeAddr
+            )
+      )
+  
