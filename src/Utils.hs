@@ -1,7 +1,10 @@
 module Utils where
 
-import System.Timeout
-import Data.Maybe
+import System.Timeout (timeout)
+import Network.Socket (HostAddress, hostAddressToTuple)
+
+import Data.Maybe (catMaybes, isNothing)
+import Data.List (intercalate)
 
 type Microseconds = Int;
 
@@ -24,3 +27,10 @@ gatherInput timeoutMillisecs =
     fmap catMaybes
   . takeUntilM isNothing
   . timeout timeoutMillisecs
+
+addrToString :: HostAddress -> String
+addrToString addr = 
+  let (a, b, c, d) = hostAddressToTuple addr in
+    intercalate
+      "."
+      [show a, show b, show c, show d]

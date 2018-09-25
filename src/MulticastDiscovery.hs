@@ -35,10 +35,10 @@ data Response = Pong String PortNumber deriving (Show, Read)
 poolGrp :: String
 poolGrp = "230.42.42.42"
 
-listenPort :: Integral a => a
+listenPort :: PortNumber
 listenPort = 4242
 
-queryResponsePort :: Integral a => a
+queryResponsePort :: PortNumber
 queryResponsePort = 4243
 
 queryTimeout :: Microseconds
@@ -51,7 +51,7 @@ sendPoolMsg :: String -> IO ()
 sendPoolMsg msg = do
   (sock, addr) <- multicastSender poolGrp listenPort
 
-  sendTo sock (pack msg) addr
+  void (sendTo sock (pack msg) addr)
 
   close sock
 
@@ -71,9 +71,11 @@ queryPool = do
   where
     extractResponse :: (ByteString, SockAddr) -> Maybe (Name, HostAddress, PortNumber)
     extractResponse (msg, (SockAddrInet _ ip)) =
-      case (read . unpack) msg :: Response of
-        Pong name port -> Just (name, ip, port)
-        _              -> Nothing
+      -- TODO: unsafe
+      let
+        (Pong name port) = (read . unpack) msg :: Response
+      in
+        Just (name, ip, port)
     extractResponse _ = Nothing
 
 listenForPingUnsafe :: IO (Maybe HostAddress)
@@ -121,7 +123,7 @@ listenForPingUnsafe' sock = do
     _ -> Nothing
 
 answerPingUnsafe :: Socket -> Name -> PortNumber -> HostAddress -> IO ()
-answerPingUnsafe socket name tcpPort remoteIp = do
+answerPingUnsafe sock name tcpPort remoteIp = do
   let responseAddr = (SockAddrInet queryResponsePort remoteIp)
 
   debugM
@@ -130,7 +132,7 @@ answerPingUnsafe socket name tcpPort remoteIp = do
 
   void (
       sendTo 
-        socket
+        sock
         ((pack . show) (Pong name tcpPort))
         responseAddr
     )

@@ -19,11 +19,10 @@ import GHC.Conc (atomically)
 import Control.Concurrent.STM.TMChan (dupTMChan, TMChan)
 import Data.Conduit.TMChan (sinkTMChan, sourceTMChan)
 
-import Control.Concurrent.Async (async, waitAny)
+import Control.Concurrent.Async (async)
 
 import Data.ByteString.Char8 (
       pack
-    , unpack
     , ByteString
   )
 
@@ -37,30 +36,26 @@ import Network.Socket (
     , addrAddress
     , setSocketOption
     , SocketOption(ReuseAddr)
-    , SockAddr(SockAddrInet)
     , defaultProtocol
     , SocketType(Stream)
     , Family(AF_INET)
-    , tupleToHostAddress
   )
 
-import Control.Exception (bracket, finally)
+import Control.Exception (finally)
 import Control.Monad (void, forever)
 
 type Address = String
-type Port = Int
 
 -- type MsgInC = MonadIO m => ConduitT i ByteString m ()
 -- type MsgOutC = MonadIO m => ConduitT ByteString o m ()
 
--- TODO: Replace client function with this one
 handleConnection :: Socket -> ConduitT () ByteString IO () -> ConduitT ByteString Void IO () -> IO()
 handleConnection connection msgInC msgOutC = 
   void $ race
       (runConduit $ msgInC .| sinkSocket connection)
       (runConduit $ sourceSocket connection .| msgOutC)
 
-prepareServerSock :: Address -> Port -> IO Socket
+prepareServerSock :: Address -> PortNumber -> IO Socket
 prepareServerSock addr port = do
   sock <- socket AF_INET Stream defaultProtocol
 
@@ -76,7 +71,7 @@ prepareServerSock addr port = do
 server :: Socket -> TMChan ByteString -> TMChan ByteString -> IO()
 server sock stdinChan stdoutChan =
   finally
-    (forever $ do
+    (forever $ do -- ...accept any client and start a haskell-thread for it
         (connection, _) <- accept sock
 
         stdinClone <- atomically (dupTMChan stdinChan)
@@ -92,7 +87,7 @@ server sock stdinChan stdoutChan =
 
 
 client :: Address -> PortNumber -> ConduitT () ByteString IO () -> ConduitT ByteString Void IO () -> IO()
-client addr port msgInC msgOutC = runTCPClient (clientSettings (fromIntegral port) (pack addr)) $ \server ->
+client addr port msgInC msgOutC = runTCPClient (clientSettings (fromIntegral port) (pack addr)) $ \connection ->
     void $ race
-        (runConduit $ msgInC .| appSink server)
-        (runConduit $ appSource server .| msgOutC)
+        (runConduit $ msgInC .| appSink connection)
+        (runConduit $ appSource connection .| msgOutC)
