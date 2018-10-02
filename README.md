@@ -81,7 +81,18 @@ stack exec -- chat
 
 For now, I only provide instructions for Arch Linux:
 
+### Pre-Built
+
 TODO
+
+### From source
+
+```console
+git clone https://github.com/ahbnr/chat.git
+cd chat/archlinux
+makepkg -s PKGBUILD
+sudo pacman -U chat*.pkg.tar.xz
+```
 
 ## TL;DR
 
