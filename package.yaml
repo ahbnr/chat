@@ -30,6 +30,8 @@ dependencies:
 - async == 2.2.1
 - optparse-applicative == 0.14.2.0
 - hslogger == 1.2.10
+- unix == 2.7.2.2
+- hostname == 1.0
 
 library:
   source-dirs: src

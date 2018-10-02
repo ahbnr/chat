@@ -7,6 +7,7 @@ import System.Log.Logger (
       updateGlobalLogger
     , setLevel
     , Priority(DEBUG)
+    , debugM
   )
 
 import Options.Applicative (
@@ -18,6 +19,7 @@ import Options.Applicative (
     , helper
     , info
     , str
+    , optional
     , argument
     , short
     , long
@@ -29,13 +31,17 @@ import Options.Applicative (
 import Control.Applicative ((<**>))
 import Control.Monad (when)
 
+import Data.Maybe (fromMaybe)
+
+import Utils (genPeerId)
+
 -- Datatype which will encode the cli options the program
 -- was started with
 -- 
 -- d-Flag: Indicates, whether debug log messages shall be shown
 -- name-String: String, by which the chat peer shall identify itself to others
 data Options
-  = Options Bool String
+  = Options Bool (Maybe String)
 
 -- Used to identify this file as source of log messages
 logID :: String
@@ -51,7 +57,7 @@ options = Options
       <> help "Print debugging logs"
     )
   -- name argument, by which the chat peer shall identify itself:
-  <*> argument str (metavar "name") 
+  <*> optional (argument str (metavar "name"))
 
 main :: IO ()
 main = processOptions =<< execParser opts
@@ -74,5 +80,16 @@ processOptions (Options debugFlag name) = do
         updateGlobalLogger Main.logID (setLevel DEBUG)
         updateGlobalLogger Chat.logID (setLevel DEBUG)
       )
+
+  -- if a name is supplied on the cli, use it, otherwise,
+  -- try to generate one
+  identity <- fromMaybe
+    genPeerId
+    (fmap pure name)
+
+  debugM
+    Main.logID
+    (concat ["Initializing peer as '", identity, "'..."])
+
   -- run the p2p chat program while identifiying with 'name' to other peers
-  initPeer name
+  initPeer identity

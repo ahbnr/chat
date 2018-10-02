@@ -4,8 +4,9 @@ import Data.ByteString (ByteString)
 import Data.ByteString.Char8 (pack, unpack)
 
 import Control.Exception (bracket)
-import Data.Maybe
-import Text.Read(readMaybe)
+import Control.Monad (void)
+import Data.Maybe (maybe, catMaybes)
+import Text.Read (readMaybe)
 
 import Network.Socket (
       socket
@@ -22,11 +23,11 @@ import Network.Socket (
   )
 
 import Network.Socket.ByteString (sendTo, recvFrom)
-import Network.Multicast
+import Network.Multicast (multicastSender, multicastReceiver)
 
-import System.Log.Logger
+import System.Log.Logger (debugM)
 
-import Utils (void, gatherInput, Microseconds)
+import Utils (gatherInput, Microseconds)
 
 type Name = String
 data Request = Ping deriving (Show, Read)
@@ -48,64 +49,48 @@ logID :: String
 logID = "MulticastDiscovery"
 
 sendPoolMsg :: String -> IO ()
-sendPoolMsg msg = do
-  (sock, addr) <- multicastSender poolGrp listenPort
-
-  void (sendTo sock (pack msg) addr)
-
-  close sock
+sendPoolMsg msg =
+-- ^send a message into the multicast group used for discovery of peers
+  -- TODO: unsafe
+  bracket
+    (multicastSender poolGrp listenPort)
+    (close . fst)
+    (\(sock, addr) -> void (sendTo sock (pack msg) addr))
 
 queryPool :: IO [(Name, HostAddress, PortNumber)]
-queryPool = do
-    sock <- socket AF_INET Datagram defaultProtocol
+queryPool =
+-- ^search for peers on the network, return their names and addresses + tcp ports
+    bracket
+      (socket AF_INET Datagram defaultProtocol)
+      close
+      (\sock -> do
+          -- address on which we will listen for responses to our
+          -- query
+          let returnAddr = SockAddrInet queryResponsePort (tupleToHostAddress (0, 0, 0, 0))
 
-    let returnAddr = (SockAddrInet queryResponsePort (tupleToHostAddress (0, 0, 0, 0)))
-    bind sock returnAddr
+          bind sock returnAddr
 
-    (sendPoolMsg . show) Ping
-    responses <- gatherInput queryTimeout (recvFrom sock 100)
-    
-    close sock
+          -- ping all peers (multicast)
+          (sendPoolMsg . show) Ping
 
-    (pure . catMaybes . map extractResponse) responses
+          -- collect all responses within a fixed timeout
+          responses <- gatherInput queryTimeout (recvFrom sock 100)
+
+          (pure . catMaybes . map extractResponse) responses
+        )
   where
     extractResponse :: (ByteString, SockAddr) -> Maybe (Name, HostAddress, PortNumber)
     extractResponse (msg, (SockAddrInet _ ip)) =
-      -- TODO: unsafe
-      let
-        (Pong name port) = (read . unpack) msg :: Response
-      in
-        Just (name, ip, port)
+    -- ^interpret a received message and return data about sender, if valid
+      (   fmap (\(Pong name port) -> (name, ip, port))
+          . readMaybe
+          . unpack
+        ) msg
     extractResponse _ = Nothing
 
-listenForPingUnsafe :: IO (Maybe HostAddress)
-listenForPingUnsafe = do
-  debugM
-    logID
-    (concat ["Trying to recv from ", show poolGrp, " on ", show listenPort])
-
-  bracket
-    (multicastReceiver poolGrp listenPort)
-    close
-    listenForPingUnsafe'
-
-respondToPingUnsafe :: Name -> HostAddress -> IO ()
-respondToPingUnsafe name remoteIp = do
-  bracket
-    (socket AF_INET Datagram defaultProtocol)
-    close
-    (\sock -> answerPingUnsafe sock name 4000 remoteIp)
-
-listenToPoolUnsafe :: Name -> IO()
-listenToPoolUnsafe name = do
-  maybeRemoteIp <- listenForPingUnsafe
-
-  case maybeRemoteIp of
-    Just remoteIp -> respondToPingUnsafe name remoteIp
-    _ -> pure ()
-
-listenForPingUnsafe' :: Socket -> IO (Maybe HostAddress)
-listenForPingUnsafe' sock = do
+listenForPingUnsafe :: Socket -> IO (Maybe HostAddress)
+listenForPingUnsafe sock = do
+-- ^listen for a ping on the given socket and return the sender address
   debugM
     logID
     "Listening for udp pings..."
@@ -115,7 +100,9 @@ listenForPingUnsafe' sock = do
   debugM
     logID
     (concat ["Received ", show msg, " from ", show addr])
-  
+
+  -- return ip of sender of ping, if the received data
+  -- is a ping
   let maybeRequest = (readMaybe . unpack) msg :: Maybe Request
 
   pure $ case maybeRequest of
@@ -124,6 +111,9 @@ listenForPingUnsafe' sock = do
 
 answerPingUnsafe :: Socket -> Name -> PortNumber -> HostAddress -> IO ()
 answerPingUnsafe sock name tcpPort remoteIp = do
+-- ^send a pong to a peer, for the purpose of answering a previous ping.
+--  The ping will contain the name of our peer and the tcp port it is listening
+--  on for connections
   let responseAddr = (SockAddrInet queryResponsePort remoteIp)
 
   debugM
@@ -139,13 +129,14 @@ answerPingUnsafe sock name tcpPort remoteIp = do
 
 pingListenerServiceUnsafe :: Name -> PortNumber -> IO()
 pingListenerServiceUnsafe name tcpPort = do
+-- ^listen for pings and answer them in an endless loop
   bracket
     (multicastReceiver poolGrp listenPort)
     close
     (\sock ->
         (sequence_ . repeat)
           (do
-              maybeAddr <- listenForPingUnsafe' sock
+              maybeAddr <- listenForPingUnsafe sock
 
               maybe
                 (pure ())
