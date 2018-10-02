@@ -1,14 +1,14 @@
 # Maintainer: ahbnr <anton.haubner@outlook.de>
 
 pkgname=chat
-pkgver=0.1
+pkgver=r8.26db164
 pkgrel=1
 pkgdesc="Simple p2p cli chat application."
 arch=('i686' 'x86_64')
 url="https://github.com/ahbnr/chat"
 license=('GPL3')
-depends=('glibc>=2.28,zlib>=1.2.11,gmp>=6.1.2')
-makedepends=('stack')
+depends=('glibc>=2.28' 'zlib>=1.2.11' 'gmp>=6.1.2')
+makedepends=('stack' 'git')
 replaces=()
 backup=()
 options=()
@@ -43,8 +43,10 @@ build() {
 package() {
 	cd "$srcdir/$_gitname"
 
-  strip -s ".stack-work/install/chat"
+  binary=$(eval ls ".stack-work/install/*/*/*/bin/chat")
+
+  strip -s "${binary}"
 
   mkdir -p "$pkgdir/usr/bin"
-  cp ".stack-work/install/chat" "$pkgdir/usr/bin"
+  cp "${binary}" "$pkgdir/usr/bin"
 }

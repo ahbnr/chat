@@ -57,7 +57,12 @@ options = Options
       <> help "Print debugging logs"
     )
   -- name argument, by which the chat peer shall identify itself:
-  <*> optional (argument str (metavar "name"))
+  <*> optional (
+        argument str (
+               metavar "name"
+            <> help "Custom name to identfy by. Generated automatically if not provided"
+          )
+      )
 
 main :: IO ()
 main = processOptions =<< execParser opts
@@ -65,8 +70,8 @@ main = processOptions =<< execParser opts
   where
     opts = info (options <**> helper)
       ( fullDesc
-     <> progDesc "Find a peer by name and start a stdin chat. Achtung: Ranzige Alpha-Version"
-     <> header "chat - commandline peer to peer chat" )
+     <> progDesc "Start a stdio chat with others on your network. Other peers are detected automatically."
+     <> header "chat - commandline p2p chat" )
 
 processOptions :: Options -> IO ()
 -- ^run the chat program and apply parsed cli options
