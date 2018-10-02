@@ -18,12 +18,12 @@ Also, no more tests or cleanup of the existing code are planned for now.
 
 * [Features](#features)
 * [What is still missing?](#what-is-still-missing)
-* [How does it work?](#how-does-it-work-)
+* [How does it work?](#how-does-it-work)
 * [Prerequisites](#prerequisites)
 * [Building](#building)
 * [Usage](#usage)
 * [Installation](#installation)
-* [TL;DR](#tl-dr)
+* [TL;DR](#tldr)
 
 ## Features
 
