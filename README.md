@@ -63,7 +63,7 @@ You'll need the Haskell development tool [stack](https://haskellstack.org).
 
 ## Building
 
-```console
+```sh
 stack build
 ```
 
@@ -71,7 +71,7 @@ stack build
 
 Just run it.
 
-```console
+```sh
 stack exec -- chat
 ```
 
@@ -83,11 +83,14 @@ For now, I only provide instructions for Arch Linux:
 
 ### Pre-Built
 
-TODO
+```sh
+curl -LO "https://github.com/ahbnr/chat/releases/download/v1.0-alpha/chat-r11.26d97ae-1-x86_64.pkg.tar.xz"
+sudo pacman -U "chat-r11.26d97ae-1-x86_64.pkg.tar.xz"
+```
 
 ### From source
 
-```console
+```sh
 curl -O "https://raw.githubusercontent.com/ahbnr/chat/master/archlinux/PKGBUILD"
 makepkg -s PKGBUILD
 sudo pacman -U chat*.pkg.tar.xz
@@ -95,7 +98,7 @@ sudo pacman -U chat*.pkg.tar.xz
 
 ## TL;DR
 
-```console
+```sh
 git clone https://github.com/ahbnr/chat.git
 cd chat
 stack build
