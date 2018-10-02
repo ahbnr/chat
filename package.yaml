@@ -1,6 +1,6 @@
 name:                chat
 version:             0.1.0.0
-git:                 "https://gitlab.com/greenbyte-dev/chat"
+git:                 "https://github.com/ahbnr/chat"
 license:             GPL-3
 author:              "Anton W. Haubner"
 maintainer:          "anton.haubner@outlook.de"
