@@ -1,0 +1,50 @@
+# Maintainer: ahbnr <anton.haubner@outlook.de>
+
+pkgname=chat
+pkgver=0.1
+pkgrel=1
+pkgdesc="Simple p2p cli chat application."
+arch=('i686' 'x86_64')
+url="https://github.com/ahbnr/chat"
+license=('GPL3')
+depends=('glibc>=2.28,zlib>=1.2.11,gmp>=6.1.2')
+makedepends=('stack')
+replaces=()
+backup=()
+options=()
+install=
+source=('git+https://github.com/ahbnr/chat.git')
+noextract=()
+md5sums=('SKIP')
+
+_gitname="chat"
+
+# Please refer to the 'USING VCS SOURCES' section of the PKGBUILD man page for
+# a description of each element in the source array.
+
+pkgver() {
+	cd "$srcdir/$_gitname"
+
+# Git, no tags available
+	printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+prepare() {
+	cd "$srcdir/$_gitname"
+
+}
+
+build() {
+	cd "$srcdir/$_gitname"
+
+  stack build
+}
+
+package() {
+	cd "$srcdir/$_gitname"
+
+  strip -s ".stack-work/install/chat"
+
+  mkdir -p "$pkgdir/usr/bin"
+  cp ".stack-work/install/chat" "$pkgdir/usr/bin"
+}

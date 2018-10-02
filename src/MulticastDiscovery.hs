@@ -51,7 +51,6 @@ logID = "MulticastDiscovery"
 sendPoolMsg :: String -> IO ()
 sendPoolMsg msg =
 -- ^send a message into the multicast group used for discovery of peers
-  -- TODO: unsafe
   bracket
     (multicastSender poolGrp listenPort)
     (close . fst)
