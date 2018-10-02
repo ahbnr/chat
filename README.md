@@ -88,8 +88,7 @@ TODO
 ### From source
 
 ```console
-git clone https://github.com/ahbnr/chat.git
-cd chat/archlinux
+curl -O "https://raw.githubusercontent.com/ahbnr/chat/master/archlinux/PKGBUILD"
 makepkg -s PKGBUILD
 sudo pacman -U chat*.pkg.tar.xz
 ```
