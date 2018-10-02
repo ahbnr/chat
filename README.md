@@ -17,7 +17,7 @@ Also, no more tests or cleanup of the existing code are planned for now.
 ## Table of Contents
 
 * [Features](#features)
-* [What is still missing?](#what-is-still-missing-)
+* [What is still missing?](#what-is-still-missing)
 * [How does it work?](#how-does-it-work-)
 * [Prerequisites](#prerequisites)
 * [Building](#building)
