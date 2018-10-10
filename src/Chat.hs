@@ -41,7 +41,9 @@ import System.Log.Logger (debugM)
 
 import Control.Monad (void)
 
-import Control.Concurrent.Async (async, waitAny, Async)
+import Control.Concurrent.Async (async, wait, Async)
+
+waitAll = sequence . map wait
 
 -- Used to identify this file as source of log messages
 logID :: String
@@ -158,4 +160,5 @@ initPeer name = do
   (stdinDriver, stdoutDriver) <- initStdioDrivers stdinChan stdoutChan
 
   -- wait for all threads to finish
-  (void . waitAny) ([streamServer, discoveryService, stdinDriver, stdoutDriver] ++ clientThreads)
+  -- TODO: Implement proper shutdown procedure
+  (void . waitAll) ([streamServer, discoveryService, stdinDriver, stdoutDriver] ++ clientThreads)
