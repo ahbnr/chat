@@ -84,8 +84,8 @@ For now, I only provide instructions for Arch Linux:
 ### Pre-Built
 
 ```sh
-curl -LO "https://github.com/ahbnr/chat/releases/download/v1.0-alpha/chat-r11.26d97ae-1-x86_64.pkg.tar.xz"
-sudo pacman -U "chat-r11.26d97ae-1-x86_64.pkg.tar.xz"
+curl -LO "https://github.com/ahbnr/chat/releases/download/v1.0.1-alpha/chat-r14.ab8b76d-1-x86_64.pkg.tar.xz"
+sudo pacman -U "chat-r14.ab8b76d-1-x86_64.pkg.tar.xz"
 ```
 
 ### From source
