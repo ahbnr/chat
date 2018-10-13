@@ -8,7 +8,9 @@ import StdioTransmission (
     , client
   )
 
-import Utils (addrToString)
+import Utils (addrToString, allowCancel)
+
+import TaskManager (TaskManager, manage, shutdown, wait, withTaskManager)
 
 import Network.Socket (
       socketPort
@@ -16,10 +18,11 @@ import Network.Socket (
     , PortNumber
   )
 
-import GHC.Conc (atomically, STM)
+import Control.Concurrent.STM (atomically, STM)
 import Control.Concurrent.STM.TMChan (
       newTMChan
     , dupTMChan
+    , closeTMChan
     , newBroadcastTMChan
     , TMChan
   )
@@ -30,6 +33,7 @@ import Conduit (
     , (.|)
     , runConduit
   )
+
 import Data.Conduit.TMChan (
       sinkTMChan
     , sourceTMChan
@@ -37,13 +41,11 @@ import Data.Conduit.TMChan (
 
 import Data.ByteString.Char8 (ByteString)
 
-import System.Log.Logger (debugM)
+import System.Log.Logger (debugM, errorM)
 
 import Control.Monad (void)
 
-import Control.Concurrent.Async (async, wait, Async)
-
-waitAll = sequence . map wait
+import Control.Exception (catch, throw, finally, AsyncException(UserInterrupt))
 
 -- Used to identify this file as source of log messages
 logID :: String
@@ -61,11 +63,11 @@ prepareStdioChannels = do
 
   pure (stdinChan, stdoutChan)
 
-initServer :: TMChan ByteString -> TMChan ByteString -> IO(PortNumber, Async ())
+initServer :: TMChan ByteString -> TMChan ByteString -> TaskManager () -> IO PortNumber
 -- ^creates an asynchronously running server thread using the 'server' function (see below)
 -- It will listen on every address on a random free port.
 -- It returns the used port and a handle for the asynchronously running server thread.
-initServer stdinChan stdoutChan = do
+initServer stdinChan stdoutChan tm = do
   debugM Chat.logID "Listening for incoming tcp connections..."
 
   -- open a socket on all local addresses on a random port (indicated by 0)
@@ -77,31 +79,31 @@ initServer stdinChan stdoutChan = do
   -- asynchonously run the server.
   -- It will send stdio to all connected clients and redirect any incoming
   -- messages to stdout.
-  streamServer <- async (
+  manage tm (
       server
-      serverSock
-      stdinChan
-      stdoutChan
+        serverSock
+        stdinChan
+        stdoutChan
     )
 
   -- return the used tcp port and a handle to the server thread
-  pure (tcpPort, streamServer)
+  pure tcpPort
 
-initDiscoveryService :: String -> PortNumber -> IO (Async ())
-initDiscoveryService name tcpPort = do
+initDiscoveryService :: String -> PortNumber -> TaskManager () -> IO ()
+initDiscoveryService name tcpPort tm = do
 -- ^runs a thread which will answer to other peers, searching for us on the network
   debugM Chat.logID "Listening for discovery udp pings..."
 
   -- this asynchronously launched background service will answer
   -- discovery requests from other peers
-  pingService <- async (pingListenerServiceUnsafe name tcpPort)
+  manage tm (
+      pingListenerServiceUnsafe name tcpPort
+    )
 
-  pure pingService
-
-connectToPeers :: String -> TMChan ByteString -> TMChan ByteString -> [(String, HostAddress, PortNumber)] -> IO [Async ()]
-connectToPeers ownName stdinChan stdoutChan =
+connectToPeers :: String -> TMChan ByteString -> TMChan ByteString -> TaskManager () -> [(String, HostAddress, PortNumber)] -> IO ()
+connectToPeers ownName stdinChan stdoutChan tm =
 -- ^connects to each peer in a given list by spawning client threads
-      sequence
+      sequence_
     . map (\(_, remoteIp, tcpPort) -> do
               debugM
                 Chat.logID
@@ -112,53 +114,95 @@ connectToPeers ownName stdinChan stdoutChan =
 
               -- this client thread will connect to the peer,
               -- redirect stdin to it and its messages to our stdout
-              async (client
+              manage tm (client
                   (addrToString remoteIp)
                   tcpPort
-                  (sourceTMChan clientStdinChan)
-                  (sinkTMChan stdoutChan)
+                  clientStdinChan
+                  stdoutChan
                 )
             )
     . filter (\(remoteName, _, _) -> remoteName /= ownName) -- dont connect to yourself
   
-initStdioDrivers :: TMChan ByteString -> TMChan ByteString -> IO (Async (), Async ())
-initStdioDrivers stdinChan stdoutChan = do
+initStdioDrivers :: TMChan ByteString -> TMChan ByteString -> TaskManager () -> IO ()
+initStdioDrivers stdinChan stdoutChan tm = do
 -- ^run threads, which will handle redirecting stdout and stdin from and to threads
 --  by using channels
-  -- redirect stdin to the stdin stm channel, which will be used to distribute
-  -- stdin to all threads which need its content
-  stdinDriver <- async (
-      runConduit $ stdinC .| sinkTMChan stdinChan
-    )
+    manage tm stdinDriver
+    manage tm stdoutDriver
+  where
+    -- redirect stdin to the stdin stm channel, which will be used to distribute
+    -- stdin to all threads which need its content
+    stdinDriver = allowCancel $ do
+      debugM
+        Chat.logID
+        "Enabling redirection of stdin into established connections..."
 
-  -- redirect everything send to the stm stdout-Channel to stdout
-  stdoutDriver <- async (
-      runConduit $ sourceTMChan stdoutChan .| stdoutC
-    )
+      -- if stdinC ever closes (EOF), also close the forwarding channel
+      finally
+        (runConduit $ stdinC .| sinkTMChan stdinChan)
+        (atomically $ closeTMChan stdinChan)
 
-  pure (stdinDriver, stdoutDriver)
+      debugM
+        Chat.logID
+        "Stdin stopped (usually cause of EOF). Shutting down all threads..."
+
+      shutdown tm
+
+      debugM
+        Chat.logID
+        "Application shut down by stdin driver."
+
+    -- redirect everything send to the stm stdout-Channel to stdout
+    stdoutDriver = allowCancel $ do
+      debugM
+        Chat.logID
+        "Enabling redirection of arriving data from connections into stdout..."
+
+      runConduit (sourceTMChan stdoutChan .| stdoutC)
+    
+      errorM
+        Chat.logID
+        "Stdout source channel was closed (this should not happen)"
   
 initPeer :: String -> IO ()
-initPeer name = do
 -- ^initialize all procedures required to boot a fully functional chat peer
+initPeer name = do
   (stdinChan, stdoutChan) <- atomically prepareStdioChannels
 
-  (tcpPort, streamServer) <- initServer stdinChan stdoutChan
+  withTaskManager
+    (\tm -> do
+        tcpPort <- initServer stdinChan stdoutChan tm
 
-  discoveryService <- initDiscoveryService name tcpPort
+        initDiscoveryService name tcpPort tm
 
-  -- search for other peers, so that we may connect to them
-  peers <- queryPool
-  debugM
-    Chat.logID
-    (concat ["Found the following peers: ", show peers])
+        -- search for other peers, so that we may connect to them
+        peers <- queryPool
+        debugM
+          Chat.logID
+          (concat ["Found the following peers: ", show peers])
 
-  -- connect to each found peer
-  clientThreads <- connectToPeers name stdinChan stdoutChan peers
 
-  -- Enable stdio
-  (stdinDriver, stdoutDriver) <- initStdioDrivers stdinChan stdoutChan
+        debugM
+          Chat.logID
+          "Trying to connect to each discovered peer..."
 
-  -- wait for all threads to finish
-  -- TODO: Implement proper shutdown procedure
-  (void . waitAll) ([streamServer, discoveryService, stdinDriver, stdoutDriver] ++ clientThreads)
+        -- connect to each found peer
+        connectToPeers name stdinChan stdoutChan tm peers
+
+        -- Enable stdio
+        initStdioDrivers stdinChan stdoutChan tm
+
+        -- wait for all threads to finish
+        -- TODO: Implement proper shutdown procedure
+        catch
+          ((void . wait) tm)
+          (\e ->
+              case e of
+                UserInterrupt -> (do
+                    debugM
+                      Chat.logID
+                      "Main thread interrupted by user (probably Ctrl-C). Shutting down..."
+                  )
+                _ -> throw e
+              )
+      )

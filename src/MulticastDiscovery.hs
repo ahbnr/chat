@@ -27,7 +27,7 @@ import Network.Multicast (multicastSender, multicastReceiver)
 
 import System.Log.Logger (debugM)
 
-import Utils (gatherInput, Microseconds)
+import Utils (gatherInput, Microseconds, allowCancel)
 
 type Name = String
 data Request = Ping deriving (Show, Read)
@@ -127,12 +127,12 @@ answerPingUnsafe sock name tcpPort remoteIp = do
     )
 
 pingListenerServiceUnsafe :: Name -> PortNumber -> IO()
-pingListenerServiceUnsafe name tcpPort = do
+pingListenerServiceUnsafe name tcpPort =
 -- ^listen for pings and answer them in an endless loop
-  bracket
-    (multicastReceiver poolGrp listenPort)
-    close
-    (\sock ->
+  (allowCancel . bracket
+      (multicastReceiver poolGrp listenPort)
+      close
+    ) (\sock ->
         (sequence_ . repeat)
           (do
               maybeAddr <- listenForPingUnsafe sock

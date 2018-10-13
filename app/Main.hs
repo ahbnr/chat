@@ -2,6 +2,8 @@ module Main where
 
 import Chat (initPeer, logID)
 import MulticastDiscovery (logID)
+import StdioTransmission (logID)
+import TaskManager (logID)
 
 import System.Log.Logger (
       updateGlobalLogger
@@ -84,6 +86,8 @@ processOptions (Options debugFlag name) = do
         updateGlobalLogger MulticastDiscovery.logID (setLevel DEBUG)
         updateGlobalLogger Main.logID (setLevel DEBUG)
         updateGlobalLogger Chat.logID (setLevel DEBUG)
+        updateGlobalLogger StdioTransmission.logID (setLevel DEBUG)
+        updateGlobalLogger TaskManager.logID (setLevel DEBUG)
       )
 
   -- if a name is supplied on the cli, use it, otherwise,

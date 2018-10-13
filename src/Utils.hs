@@ -6,6 +6,9 @@ import System.Timeout (timeout)
 import Network.Socket (HostAddress, hostAddressToTuple)
 import Network.HostName (getHostName)
 
+import Control.Exception (catch)
+import Control.Concurrent.Async (AsyncCancelled(AsyncCancelled))
+
 import Data.Maybe (catMaybes, isNothing)
 import Data.List (intercalate)
 
@@ -55,3 +58,15 @@ genPeerId = do
   -- and on the local machine,we combine the process pid,
   -- the current user and the hostname
   (pure . concat) [show pid, "@", user, "@", host]
+
+onCancel :: IO a -> IO a -> IO a
+-- ^On AsyncCancelled while exectuting the given task, run an specific action.
+-- It does not rethrow AsyncCancelled.
+onCancel action task =
+  catch
+    task
+    (\AsyncCancelled -> action)
+
+allowCancel :: IO () -> IO ()
+-- ^Ignore AsyncCancelled exceptions, which indicate proper shutdown
+allowCancel = onCancel (pure ())
