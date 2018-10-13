@@ -37,6 +37,7 @@ That's it.
 ## What is still missing?
 
 * encryption
+* authentication
 * ability to send binary files
   (sending text files does work already: `cat myFile | chat`)
 
@@ -80,11 +81,9 @@ For now, I only provide instructions for Arch Linux:
 
 ### Pre-Built
 
-(old pre-release 1.0.1:)
-
 ```sh
-curl -LO "https://github.com/ahbnr/chat/releases/download/v1.0.1-alpha/chat-r14.ab8b76d-1-x86_64.pkg.tar.xz"
-sudo pacman -U "chat-r14.ab8b76d-1-x86_64.pkg.tar.xz"
+curl -LO "https://github.com/ahbnr/chat/releases/download/v1.0.2-alpha/chat-r18.d22da93-1-x86_64.pkg.tar.xz"
+sudo pacman -U "chat-r18.d22da93-1-x86_64.pkg.tar.xz"
 ```
 
 ### From source
