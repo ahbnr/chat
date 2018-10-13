@@ -6,7 +6,7 @@ import Control.Concurrent (myThreadId)
 import Control.Concurrent.Async (Async, wait, cancel, async, asyncThreadId)
 import Control.Concurrent.STM.TVar (TVar, readTVar, writeTVar, newTVar)
 
-import Control.Monad (when, void)
+import Control.Monad (unless, when, void)
 import Control.Monad.STM (STM, atomically)
 
 import System.Log.Logger (debugM)
@@ -31,7 +31,7 @@ logID = "TaskManager"
 --   immediately canceling the new thread
 --   (this is necessary, if a crucial thread fails early)
 
-data TaskManager a = TaskManager (TVar (
+newtype TaskManager a = TaskManager (TVar (
       [Async a] -- ^all managed threads
     , Bool -- ^'locked', whether the TaskManager is locked, and cant accept any more threads
     , Bool -- ^'isShutDown', whether the TaskManager is shutting down or is already shut down
@@ -43,16 +43,16 @@ instance Show TaskManagerException where
     show ManagerWaiting = "No more threads can be managed by this TaskManager instance, since it is waiting for completion of all its threads."
 instance Exception TaskManagerException
 
-mkTaskManager :: STM (TaskManager a)
-mkTaskManager = do
-  status <- newTVar ([], False, False)
-  (pure . TaskManager) status
-
 withTaskManager :: (TaskManager a -> IO b) -> IO b
 withTaskManager =
-  bracket
-    (atomically mkTaskManager)
-    shutdown
+    bracket
+      (atomically mkTaskManager)
+      shutdown
+  where
+    mkTaskManager :: STM (TaskManager a)
+    mkTaskManager = do
+      status <- newTVar ([], False, False)
+      (pure . TaskManager) status
 
 manage :: TaskManager a -> IO a -> IO ()
 -- ^add a task to the task manager.
@@ -108,8 +108,8 @@ shutdown (TaskManager status) = do
   (tasks, isShutDown) <- atomically (do
       (tasks, _, isShutDown) <- readTVar status
 
-      when
-        (not isShutDown)
+      unless
+        isShutDown
         (writeTVar
             status
             (    tasks
@@ -124,8 +124,7 @@ shutdown (TaskManager status) = do
   callingID <- myThreadId
 
   (
-      sequence_
-    . map (shutdownAction isShutDown)
+      mapM_ (shutdownAction isShutDown)
     . filter ((callingID /=) . asyncThreadId)
     ) tasks
   where
@@ -151,8 +150,8 @@ wait (TaskManager status) = do
   tasks <- atomically (do
       (tasks, locked, isShutDown) <- readTVar status
 
-      when
-        (not locked)
+      unless
+        locked
         (writeTVar
             status
             (tasks, True, isShutDown)
@@ -161,4 +160,4 @@ wait (TaskManager status) = do
       pure tasks
     )
 
-  (sequence . map Control.Concurrent.Async.wait) tasks
+  mapM Control.Concurrent.Async.wait tasks

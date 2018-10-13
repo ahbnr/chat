@@ -11,12 +11,10 @@ import Data.Conduit.Network (
     , clientSettings
   )
 
-
-import Network.Socket (Socket, PortNumber)
-
 import Control.Concurrent (myThreadId)
 import Control.Concurrent.STM (atomically)
 import Control.Concurrent.STM.TMChan (dupTMChan, TMChan)
+
 import Data.Conduit.TMChan (sinkTMChan, sourceTMChan, isClosedTMChan)
 
 import Data.ByteString.Char8 (
@@ -32,11 +30,11 @@ import Network.Socket (
     , listen
     , getAddrInfo
     , addrAddress
-    , setSocketOption
-    , SocketOption(ReuseAddr)
     , defaultProtocol
     , SocketType(Stream)
     , Family(AF_INET)
+    , Socket
+    , PortNumber
   )
 
 import System.Log.Logger (debugM)
@@ -55,20 +53,19 @@ type Address = String
 
 handleConnection :: Socket -> ConduitT () ByteString IO () -> ConduitT ByteString Void IO () -> IO()
 handleConnection connection msgInC msgOutC = 
--- ^run a connection by redirecting application input (msgInC, usually stdin) to
+-- ^operate a connection by redirecting application input (msgInC, usually stdin) to
 --  the connected peer and incoming messages to application output (msgOutC, usually
 --  stdout)
--- TODO rephrase "run"
   (allowCancel . finally
       (withTaskManager
           (\tm -> do
-              let outgoing = (runConduit $ msgInC .| sinkSocket connection)
-              let incoming = (runConduit $ sourceSocket connection .| msgOutC)
+              let outgoing = runConduit $ msgInC .| sinkSocket connection
+              let incoming = runConduit $ sourceSocket connection .| msgOutC
 
               manage tm outgoing
               manage tm incoming
 
-              ((void . wait) tm)
+              (void . wait) tm
             )
         )
     ) (close connection)
@@ -79,16 +76,12 @@ prepareServerSock addr port = do
   -- create tcp socket
   sock <- socket AF_INET Stream defaultProtocol
 
-  -- TODO
-  setSocketOption sock ReuseAddr 1
-
   -- get necessary information to bind to local address
-  -- TODO: unsafe
   (localAddrInfo:_) <- getAddrInfo Nothing (Just addr) ((Just . show) port) 
 
-  -- bind socket and listen for connections (TODO: What does "1" mean)
+  -- bind socket and listen for connections
   bind sock (addrAddress localAddrInfo)
-  listen sock 1
+  listen sock 1 -- 1 indicates the maximum number of queued connections. (Maybe increase that in the future!)
 
   pure sock
 

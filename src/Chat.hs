@@ -8,7 +8,7 @@ import StdioTransmission (
     , client
   )
 
-import Utils (addrToString, allowCancel)
+import Utils (addrToString, allowCancel, onUserInterrupt)
 
 import TaskManager (TaskManager, manage, shutdown, wait, withTaskManager)
 
@@ -45,7 +45,7 @@ import System.Log.Logger (debugM, errorM)
 
 import Control.Monad (void)
 
-import Control.Exception (catch, throw, finally, AsyncException(UserInterrupt))
+import Control.Exception (finally)
 
 -- Used to identify this file as source of log messages
 logID :: String
@@ -74,7 +74,7 @@ initServer stdinChan stdoutChan tm = do
   serverSock <- prepareServerSock "0.0.0.0" 0
 
   -- remember the used port, to use it multicast discovery later
-  tcpPort <- socketPort serverSock -- TODO: unsafe!
+  tcpPort <- socketPort serverSock
 
   -- asynchonously run the server.
   -- It will send stdio to all connected clients and redirect any incoming
@@ -103,8 +103,7 @@ initDiscoveryService name tcpPort tm = do
 connectToPeers :: String -> TMChan ByteString -> TMChan ByteString -> TaskManager () -> [(String, HostAddress, PortNumber)] -> IO ()
 connectToPeers ownName stdinChan stdoutChan tm =
 -- ^connects to each peer in a given list by spawning client threads
-      sequence_
-    . map (\(_, remoteIp, tcpPort) -> do
+      mapM_ (\(_, remoteIp, tcpPort) -> do
               debugM
                 Chat.logID
                 (concat ["Connecting to ", show remoteIp])
@@ -166,43 +165,42 @@ initStdioDrivers stdinChan stdoutChan tm = do
   
 initPeer :: String -> IO ()
 -- ^initialize all procedures required to boot a fully functional chat peer
-initPeer name = do
-  (stdinChan, stdoutChan) <- atomically prepareStdioChannels
-
-  withTaskManager
-    (\tm -> do
-        tcpPort <- initServer stdinChan stdoutChan tm
-
-        initDiscoveryService name tcpPort tm
-
-        -- search for other peers, so that we may connect to them
-        peers <- queryPool
+initPeer name =
+  onUserInterrupt
+    (   -- this UserInterrupt handler ensures application does not exit with error code on Ctrl-C
+        -- and also prints a debug message, if the debug log is enabled.
+        -- Use of "withTaskManager" down below ensures, that the application is shut down
+        -- properly on Ctrl-C
         debugM
           Chat.logID
-          (concat ["Found the following peers: ", show peers])
+          "Main thread interrupted by user (probably Ctrl-C). Shutting down..."
+      )
+    (do
+        (stdinChan, stdoutChan) <- atomically prepareStdioChannels
+
+        withTaskManager (\tm -> do
+              tcpPort <- initServer stdinChan stdoutChan tm
+
+              initDiscoveryService name tcpPort tm
+
+              -- search for other peers, so that we may connect to them
+              peers <- queryPool
+              debugM
+                Chat.logID
+                (concat ["Found the following peers: ", show peers])
 
 
-        debugM
-          Chat.logID
-          "Trying to connect to each discovered peer..."
+              debugM
+                Chat.logID
+                "Trying to connect to each discovered peer..."
 
-        -- connect to each found peer
-        connectToPeers name stdinChan stdoutChan tm peers
+              -- connect to each found peer
+              connectToPeers name stdinChan stdoutChan tm peers
 
-        -- Enable stdio
-        initStdioDrivers stdinChan stdoutChan tm
+              -- Enable stdio
+              initStdioDrivers stdinChan stdoutChan tm
 
-        -- wait for all threads to finish
-        -- TODO: Implement proper shutdown procedure
-        catch
-          ((void . wait) tm)
-          (\e ->
-              case e of
-                UserInterrupt -> (do
-                    debugM
-                      Chat.logID
-                      "Main thread interrupted by user (probably Ctrl-C). Shutting down..."
-                  )
-                _ -> throw e
-              )
+              -- wait for all threads to finish
+              (void . wait) tm
+          )
       )

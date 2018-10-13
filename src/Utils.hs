@@ -2,11 +2,13 @@ module Utils where
 
 import System.Posix.Process (getProcessID)
 import System.Posix.User (getEffectiveUserName)
+
 import System.Timeout (timeout)
+
 import Network.Socket (HostAddress, hostAddressToTuple)
 import Network.HostName (getHostName)
 
-import Control.Exception (catch)
+import Control.Exception (catch, throw, AsyncException(UserInterrupt))
 import Control.Concurrent.Async (AsyncCancelled(AsyncCancelled))
 
 import Data.Maybe (catMaybes, isNothing)
@@ -70,3 +72,12 @@ onCancel action task =
 allowCancel :: IO () -> IO ()
 -- ^Ignore AsyncCancelled exceptions, which indicate proper shutdown
 allowCancel = onCancel (pure ())
+
+onUserInterrupt :: IO a -> IO a -> IO a
+onUserInterrupt action task =
+  catch
+    task
+    (\e -> case e of
+        UserInterrupt -> action
+        _ -> throw e
+      )

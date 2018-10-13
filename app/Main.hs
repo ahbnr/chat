@@ -33,7 +33,7 @@ import Options.Applicative (
 import Control.Applicative ((<**>))
 import Control.Monad (when)
 
-import Data.Maybe (fromMaybe)
+import Data.Maybe (maybe)
 
 import Utils (genPeerId)
 
@@ -92,9 +92,10 @@ processOptions (Options debugFlag name) = do
 
   -- if a name is supplied on the cli, use it, otherwise,
   -- try to generate one
-  identity <- fromMaybe
+  identity <- maybe
     genPeerId
-    (fmap pure name)
+    pure
+    name
 
   debugM
     Main.logID

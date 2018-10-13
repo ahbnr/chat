@@ -5,7 +5,8 @@ import Data.ByteString.Char8 (pack, unpack)
 
 import Control.Exception (bracket)
 import Control.Monad (void)
-import Data.Maybe (maybe, catMaybes)
+
+import Data.Maybe (maybe, mapMaybe)
 import Text.Read (readMaybe)
 
 import Network.Socket (
@@ -75,11 +76,11 @@ queryPool =
           -- collect all responses within a fixed timeout
           responses <- gatherInput queryTimeout (recvFrom sock 100)
 
-          (pure . catMaybes . map extractResponse) responses
+          (pure . mapMaybe extractResponse) responses
         )
   where
     extractResponse :: (ByteString, SockAddr) -> Maybe (Name, HostAddress, PortNumber)
-    extractResponse (msg, (SockAddrInet _ ip)) =
+    extractResponse (msg, SockAddrInet _ ip) =
     -- ^interpret a received message and return data about sender, if valid
       (   fmap (\(Pong name port) -> (name, ip, port))
           . readMaybe
@@ -113,7 +114,7 @@ answerPingUnsafe sock name tcpPort remoteIp = do
 -- ^send a pong to a peer, for the purpose of answering a previous ping.
 --  The ping will contain the name of our peer and the tcp port it is listening
 --  on for connections
-  let responseAddr = (SockAddrInet queryResponsePort remoteIp)
+  let responseAddr = SockAddrInet queryResponsePort remoteIp
 
   debugM
     logID
