@@ -29,7 +29,7 @@ that means:
 ## Features
 
 * automatically connects to other peers
-* redirects stdin to them
+* redirects stdin (or file contents) to them
 * redirects their messages to stdout
 
 That's it.
@@ -38,8 +38,6 @@ That's it.
 
 * encryption
 * authentication
-* ability to send binary files
-  (sending text files does work already: `cat myFile | chat`)
 
 ## How does it work?
 
@@ -67,10 +65,22 @@ stack build
 
 ## Usage
 
-Just run it.
+For chatting, just run it.
 
 ```sh
 stack exec -- chat
+```
+
+You can use pipes to send the output of other programs to chat peers:
+
+```sh
+cat someFile | stack exec -- chat
+```
+
+You can directly read from files instead of stdin:
+
+```sh
+stack exec -- chat --file myFile
 ```
 
 * you can get additional debug information by using the `-d` flag
@@ -82,8 +92,8 @@ For now, I only provide instructions for Arch Linux:
 ### Pre-Built
 
 ```sh
-curl -LO "https://github.com/ahbnr/chat/releases/download/v1.0.2-alpha/chat-r18.d22da93-1-x86_64.pkg.tar.xz"
-sudo pacman -U "chat-r18.d22da93-1-x86_64.pkg.tar.xz"
+curl -LO "https://github.com/ahbnr/chat/releases/download/v1.1.0-alpha/chat-r20.071ce1b-1-x86_64.pkg.tar.xz"
+sudo pacman -U "chat-r20.071ce1b-1-x86_64.pkg.tar.xz"
 ```
 
 ### From source
