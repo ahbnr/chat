@@ -2,15 +2,17 @@ module Chat where
 
 import MulticastDiscovery (pingListenerServiceUnsafe, queryPool)
 
-import StdioTransmission (
+import Connections (
       prepareServerSock
     , server
     , client
   )
 
-import Utils (addrToString, allowCancel, onUserInterrupt)
+import Utils (addrToString, onUserInterrupt)
 
-import TaskManager (TaskManager, manage, shutdown, wait, withTaskManager)
+import TaskManager (TaskManager, manage, wait, withTaskManager)
+
+import IODrivers (initIODrivers)
 
 import Network.Socket (
       socketPort
@@ -22,52 +24,37 @@ import Control.Concurrent.STM (atomically, STM)
 import Control.Concurrent.STM.TMChan (
       newTMChan
     , dupTMChan
-    , closeTMChan
     , newBroadcastTMChan
     , TMChan
   )
 
-import Conduit (
-      stdinC
-    , stdoutC
-    , (.|)
-    , runConduit
-  )
-
-import Data.Conduit.TMChan (
-      sinkTMChan
-    , sourceTMChan
-  )
-
 import Data.ByteString.Char8 (ByteString)
 
-import System.Log.Logger (debugM, errorM)
+import System.Log.Logger (debugM)
 
 import Control.Monad (void)
-
-import Control.Exception (finally)
 
 -- Used to identify this file as source of log messages
 logID :: String
 logID = "Chat"
 
-prepareStdioChannels :: STM (TMChan ByteString, TMChan ByteString)
--- ^create stm channels to be used for distributing stdin to multiple threads
+prepareIOChannels :: STM (TMChan ByteString, TMChan ByteString)
+-- ^create stm channels to be used for distributing input (stdin or file contents) to multiple threads
 -- and and letting those threads produce output for stdout
-prepareStdioChannels = do
-  -- the stdin channel will be a broadcast channel, so that everything
+prepareIOChannels = do
+  -- the input channel will be a broadcast channel, so that everything
   -- written to it, will be sent to every channel created from it
   -- by dupTMChan
-  stdinChan <- newBroadcastTMChan
+  inputChan <- newBroadcastTMChan
   stdoutChan <- newTMChan
 
-  pure (stdinChan, stdoutChan)
+  pure (inputChan, stdoutChan)
 
 initServer :: TMChan ByteString -> TMChan ByteString -> TaskManager () -> IO PortNumber
 -- ^creates an asynchronously running server thread using the 'server' function (see below)
 -- It will listen on every address on a random free port.
 -- It returns the used port and a handle for the asynchronously running server thread.
-initServer stdinChan stdoutChan tm = do
+initServer inputChan stdoutChan tm = do
   debugM Chat.logID "Listening for incoming tcp connections..."
 
   -- open a socket on all local addresses on a random port (indicated by 0)
@@ -77,12 +64,12 @@ initServer stdinChan stdoutChan tm = do
   tcpPort <- socketPort serverSock
 
   -- asynchonously run the server.
-  -- It will send stdio to all connected clients and redirect any incoming
+  -- It will send input (stdin / file) to all connected clients and redirect any incoming
   -- messages to stdout.
   manage tm (
       server
         serverSock
-        stdinChan
+        inputChan
         stdoutChan
     )
 
@@ -101,18 +88,18 @@ initDiscoveryService name tcpPort tm = do
     )
 
 connectToPeers :: String -> TMChan ByteString -> TMChan ByteString -> TaskManager () -> [(String, HostAddress, PortNumber)] -> IO ()
-connectToPeers ownName stdinChan stdoutChan tm =
+connectToPeers ownName inputChan stdoutChan tm =
 -- ^connects to each peer in a given list by spawning client threads
       mapM_ (\(_, remoteIp, tcpPort) -> do
               debugM
                 Chat.logID
                 (concat ["Connecting to ", show remoteIp])
 
-              -- duplicate stdin to be redirected to the current client
-              clientStdinChan <- atomically (dupTMChan stdinChan)
+              -- duplicate input (stdin or file) to be redirected to the current client
+              clientStdinChan <- atomically (dupTMChan inputChan)
 
               -- this client thread will connect to the peer,
-              -- redirect stdin to it and its messages to our stdout
+              -- redirect input to it and its messages to our stdout
               manage tm (client
                   (addrToString remoteIp)
                   tcpPort
@@ -121,51 +108,10 @@ connectToPeers ownName stdinChan stdoutChan tm =
                 )
             )
     . filter (\(remoteName, _, _) -> remoteName /= ownName) -- dont connect to yourself
-  
-initStdioDrivers :: TMChan ByteString -> TMChan ByteString -> TaskManager () -> IO ()
-initStdioDrivers stdinChan stdoutChan tm = do
--- ^run threads, which will handle redirecting stdout and stdin from and to threads
---  by using channels
-    manage tm stdinDriver
-    manage tm stdoutDriver
-  where
-    -- redirect stdin to the stdin stm channel, which will be used to distribute
-    -- stdin to all threads which need its content
-    stdinDriver = allowCancel $ do
-      debugM
-        Chat.logID
-        "Enabling redirection of stdin into established connections..."
-
-      -- if stdinC ever closes (EOF), also close the forwarding channel
-      finally
-        (runConduit $ stdinC .| sinkTMChan stdinChan)
-        (atomically $ closeTMChan stdinChan)
-
-      debugM
-        Chat.logID
-        "Stdin stopped (usually cause of EOF). Shutting down all threads..."
-
-      shutdown tm
-
-      debugM
-        Chat.logID
-        "Application shut down by stdin driver."
-
-    -- redirect everything send to the stm stdout-Channel to stdout
-    stdoutDriver = allowCancel $ do
-      debugM
-        Chat.logID
-        "Enabling redirection of arriving data from connections into stdout..."
-
-      runConduit (sourceTMChan stdoutChan .| stdoutC)
-    
-      errorM
-        Chat.logID
-        "Stdout source channel was closed (this should not happen)"
-  
-initPeer :: String -> IO ()
+ 
+initPeer :: String -> (TMChan ByteString -> TaskManager () -> IO ()) -> IO ()
 -- ^initialize all procedures required to boot a fully functional chat peer
-initPeer name =
+initPeer name inputDriver =
   onUserInterrupt
     (   -- this UserInterrupt handler ensures application does not exit with error code on Ctrl-C
         -- and also prints a debug message, if the debug log is enabled.
@@ -176,10 +122,10 @@ initPeer name =
           "Main thread interrupted by user (probably Ctrl-C). Shutting down..."
       )
     (do
-        (stdinChan, stdoutChan) <- atomically prepareStdioChannels
+        (inputChan, stdoutChan) <- atomically prepareIOChannels
 
         withTaskManager (\tm -> do
-              tcpPort <- initServer stdinChan stdoutChan tm
+              tcpPort <- initServer inputChan stdoutChan tm
 
               initDiscoveryService name tcpPort tm
 
@@ -195,10 +141,16 @@ initPeer name =
                 "Trying to connect to each discovered peer..."
 
               -- connect to each found peer
-              connectToPeers name stdinChan stdoutChan tm peers
+              connectToPeers name inputChan stdoutChan tm peers
 
-              -- Enable stdio
-              initStdioDrivers stdinChan stdoutChan tm
+              -- Enable IO by running threads that redirect
+              -- incoming data into stdout and outgoing data
+              -- into stm channels (which will be used to
+              -- feed connections)
+              initIODrivers 
+                (inputDriver inputChan tm)
+                stdoutChan
+                tm
 
               -- wait for all threads to finish
               (void . wait) tm

@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module StdioTransmission where
+module Connections where
 
 import Conduit (runConduit, (.|), Void, ConduitT)
 import Data.Conduit.Network (
@@ -47,7 +47,7 @@ import Utils (allowCancel, onCancel)
 
 -- Used to identify this file as source of log messages
 logID :: String
-logID = "StdioTransmission"
+logID = "Connections"
 
 type Address = String
 
@@ -86,7 +86,7 @@ prepareServerSock addr port = do
   pure sock
 
 server :: Socket -> TMChan ByteString -> TMChan ByteString -> IO()
-server sock stdinChan stdoutChan =
+server sock inputChan stdoutChan =
 -- accept all incoming connections on the given socket and
 -- spawn threads to handle them
   (allowCancel . withTaskManager)
@@ -96,15 +96,17 @@ server sock stdinChan stdoutChan =
                 -- accept incoming connection
                 (connection, _) <- accept sock
 
-                -- create clone of stdin channel, so that stdin
+                -- create clone of input channel, so that its
                 -- content may be used with the connection
-                stdinClone <- atomically (dupTMChan stdinChan)
+                -- (this way, for example stdin can be distributed
+                --  to every connected peer)
+                inputClone <- atomically (dupTMChan inputChan)
                 
                 -- spawn a thread to handle the new connection
                 manage serverTm (
                     handleConnection
                       connection
-                      (sourceTMChan stdinClone)
+                      (sourceTMChan inputClone)
                       (sinkTMChan stdoutChan)
                   )
               )
@@ -120,7 +122,7 @@ client addr port msgInC msgOutC =
       threadId <- myThreadId
 
       debugM
-        StdioTransmission.logID
+        Connections.logID
         (concat ["Connecting as client (", show threadId, ") to ", show addr, ":", show port, "..."])
 
       runTCPClient
@@ -129,9 +131,9 @@ client addr port msgInC msgOutC =
             onCancel
               (do
                   debugM
-                      StdioTransmission.logID
+                      Connections.logID
                       (concat ["Connection to ", show addr, ":", show port, " was cancelled by application shutdown.",
-                                "\n", "Trying to flush stdin into connection before terminating, if the corresponding channel was closed."])
+                                "\n", "Trying to flush input into connection before terminating, if the corresponding channel was closed."])
 
                   closed <- atomically (isClosedTMChan msgInC)
                     

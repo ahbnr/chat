@@ -1,9 +1,9 @@
 module TaskManager where
 
-import Control.Exception (Exception, throw, bracket)
+import Control.Exception (Exception, throw, bracket, throwTo)
 
 import Control.Concurrent (myThreadId)
-import Control.Concurrent.Async (Async, wait, cancel, async, asyncThreadId)
+import Control.Concurrent.Async (Async, wait, cancel, async, asyncThreadId, AsyncCancelled(AsyncCancelled))
 import Control.Concurrent.STM.TVar (TVar, readTVar, writeTVar, newTVar)
 
 import Control.Monad (unless, when, void)
@@ -44,10 +44,17 @@ instance Show TaskManagerException where
 instance Exception TaskManagerException
 
 withTaskManager :: (TaskManager a -> IO b) -> IO b
+-- ^create a taskmanager instance to be used in the given action.
+-- If the action terminates or an exception is thrown, all tasks
+-- in the taskmanager will be shut down and it will wait for all
+-- tasks to complete.
 withTaskManager =
     bracket
       (atomically mkTaskManager)
-      shutdown
+      (\tm -> do
+          shutdown tm
+          (void . TaskManager.wait) tm
+        )
   where
     mkTaskManager :: STM (TaskManager a)
     mkTaskManager = do
@@ -97,53 +104,67 @@ manage (TaskManager status) action = do
 shutdown :: TaskManager a -> IO ()
 -- ^will instruct all threads managed to shut down by sending async exceptions to them.
 -- Exceptions are only sent, if this is the first call to shutdown.
--- It will block, until all threads have completed.
+-- It will *not* block, use `wait` for that.
 -- After calling, no additional threads can be managed.
 -- If a thread within the managed group calls shutdown, it will not be canceled.
---
--- Returns the result of all managed threads after they have completed.
 shutdown (TaskManager status) = do
-  -- atomically query the manager's status and set the 'shut down' flag, if it wasnt shut down already
-  -- Also retrieve the original shutdown status and managed tasks.
-  (tasks, isShutDown) <- atomically (do
-      (tasks, _, isShutDown) <- readTVar status
+    -- atomically query the manager's status and set the 'shut down' flag, if it wasnt shut down already
+    -- Also retrieve the original shutdown status and managed tasks.
+    (tasks, isShutDown) <- atomically (do
+        (tasks, _, isShutDown) <- readTVar status
 
-      unless
-        isShutDown
-        (writeTVar
-            status
-            (    tasks
-               , True -- mark as locked and shut down
-               , True
-             )
-          )
+        unless
+          isShutDown
+          (writeTVar
+              status
+              (    tasks
+                 , True -- mark as locked and shut down
+                 , True
+               )
+            )
 
-      pure (tasks, isShutDown)
-    )
+        pure (tasks, isShutDown)
+      )
 
-  callingID <- myThreadId
+    callingID <- myThreadId
 
-  (
-      mapM_ (shutdownAction isShutDown)
-    . filter ((callingID /=) . asyncThreadId)
-    ) tasks
+    debugM
+      TaskManager.logID
+      (concat ["Shutting down managed threads (caused by id ", show callingID, ")"])
+
+    if isShutDown then
+      debugM
+        TaskManager.logID
+        (concat ["This TaskManager is already shutting down. Continueing."])
+    else (do
+        (
+            mapM_ shutdownAction
+          . filter ((callingID /=) . asyncThreadId)
+          ) tasks
+
+        debugM
+          TaskManager.logID
+          (concat ["Cancelled threads (", show callingID, ")"])
+      )
   where
-   shutdownAction :: Bool -> Async a -> IO ()
-   shutdownAction isShutDown =
-      if isShutDown then
-        void . Control.Concurrent.Async.wait
-      else (\task -> do
-          debugM
-            TaskManager.logID
-            (concat ["Canceling thread with id ", (show . asyncThreadId) task])
+    shutdownAction :: Async a -> IO ()
+    shutdownAction task = do
+      debugM
+        TaskManager.logID
+        (concat ["Canceling thread with id ", (show . asyncThreadId) task])
 
-          cancel task
-        )
+      asyncCancel task
+
+    asyncCancel :: Async a -> IO()
+    -- ^cancel a thread, but do not wait for it.
+    asyncCancel task = throwTo (asyncThreadId task) AsyncCancelled
   
 wait :: TaskManager a -> IO [a]
 -- ^wait for all tasks managed to be completed by stopping execution until this
 -- condition is reached.
 -- After calling, no additional threads can be managed.
+-- The calling thread will not wait for itself, if it is beeing managed.
+-- Be careful, not to let threads wait for each other (deadlock).
 wait (TaskManager status) = do
   -- atomically query for managed tasks, and set status to locked, if not set already.
   -- This way, no more tasks can be added, while waiting.
@@ -160,4 +181,10 @@ wait (TaskManager status) = do
       pure tasks
     )
 
-  mapM Control.Concurrent.Async.wait tasks
+  -- wait for tasks, but dont wait for youself, if you're a managed task
+  callingID <- myThreadId
+
+  (
+       mapM Control.Concurrent.Async.wait
+     . filter ((callingID /=) . asyncThreadId)
+    ) tasks
