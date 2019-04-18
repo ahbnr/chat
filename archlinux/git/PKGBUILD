@@ -1,7 +1,7 @@
 # Maintainer: ahbnr <anton.haubner@outlook.de>
 
-pkgname=chat
-pkgver=r8.26db164
+pkgname=chat-git
+pkgver=r22.f6c8a01
 pkgrel=1
 pkgdesc="Simple p2p cli chat application."
 arch=('i686' 'x86_64')
@@ -10,6 +10,8 @@ license=('GPL3')
 depends=('glibc>=2.28' 'zlib>=1.2.11' 'gmp>=6.1.2')
 makedepends=('stack' 'git')
 replaces=()
+conflicts=('chat-bin')
+provides=('chat')
 backup=()
 options=()
 install=

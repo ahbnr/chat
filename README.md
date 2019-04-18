@@ -1,5 +1,7 @@
 # chat
 
+[![Build Status](https://ahbnr.de/jenkins/buildStatus/icon?job=chat)](https://ahbnr.de/jenkins/job/chat/)
+
 Simple p2p cli chat application.
 
 I wrote this application to be able to easily share links and files on the cli
@@ -38,6 +40,7 @@ That's it.
 
 * encryption
 * authentication
+* Oftentimes a bug causes input supplied via pipes or the `-f` flag to be lost
 
 ## How does it work?
 
@@ -72,6 +75,7 @@ stack exec -- chat
 ```
 
 You can use pipes to send the output of other programs to chat peers:
+(Currently a bug causes input supplied via pipes or the `--file` flag to be lost)
 
 ```sh
 cat someFile | stack exec -- chat
@@ -87,19 +91,21 @@ stack exec -- chat --file myFile
 
 ## Installation
 
-For now, I only provide instructions for Arch Linux:
+The latest Linux binary can be obtained from [here](https://ahbnr.de/jenkins/job/chat/lastSuccessfulBuild/artifact/.stack-work/install/x86_64-linux/lts-12.8/8.4.3/bin/chat).
+Packages for Arch Linux are also available:
 
 ### Pre-Built
 
 ```sh
-curl -LO "https://github.com/ahbnr/chat/releases/download/v1.1.0-alpha/chat-r20.071ce1b-1-x86_64.pkg.tar.xz"
-sudo pacman -U "chat-r20.071ce1b-1-x86_64.pkg.tar.xz"
+curl -O "https://raw.githubusercontent.com/ahbnr/chat/master/archlinux/bin/PKGBUILD"
+makepkg -s PKGBUILD
+sudo pacman -U chat*.pkg.tar.xz
 ```
 
 ### From source
 
 ```sh
-curl -O "https://raw.githubusercontent.com/ahbnr/chat/master/archlinux/PKGBUILD"
+curl -O "https://raw.githubusercontent.com/ahbnr/chat/master/archlinux/git/PKGBUILD"
 makepkg -s PKGBUILD
 sudo pacman -U chat*.pkg.tar.xz
 ```
@@ -107,10 +113,18 @@ sudo pacman -U chat*.pkg.tar.xz
 ## TL;DR
 
 ```sh
-git clone https://github.com/ahbnr/chat.git
+# Download source
+git clone --depth=1 https://github.com/ahbnr/chat.git
 cd chat
-stack build
-stack exec chat
+
+# Download stack build tool
+curl -sSLO https://get.haskellstack.org/stable/linux-x86_64.tar.gz
+tar -xf linux-x86_64.tar.gz
+cp stack-*/stack .
+rm -rf stack-*
+
+# Building
+./stack build
+./stack exec chat
 ```
 
-*Doesn't work?* You **need [stack](#prerequisites)**!
