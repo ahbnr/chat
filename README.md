@@ -127,3 +127,4 @@ rm -rf stack-*
 ./stack build
 ./stack exec chat
 ```
+
