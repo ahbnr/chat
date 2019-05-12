@@ -6,7 +6,7 @@ import Data.ByteString.Char8 (pack, unpack)
 import Control.Exception (bracket)
 import Control.Monad (void)
 
-import Data.Maybe (maybe, mapMaybe)
+import Data.Maybe (maybe, mapMaybe, maybeToList)
 import Text.Read (readMaybe)
 
 import Network.Socket (
@@ -27,6 +27,9 @@ import Network.Socket.ByteString (sendTo, recvFrom)
 import Network.Multicast (multicastSender, multicastReceiver)
 
 import System.Log.Logger (debugM)
+import System.Timeout (timeout)
+
+import Numeric.Natural as Natural
 
 import Utils (gatherInput, Microseconds, allowCancel)
 
@@ -44,7 +47,14 @@ queryResponsePort :: PortNumber
 queryResponsePort = 4243
 
 queryTimeout :: Microseconds
-queryTimeout = 1000000
+queryTimeout = 1200000
+
+-- Maximum number of retries for searching for other peers
+poolQueryingRetries :: Natural
+poolQueryingRetries = 2
+
+recvMax :: Int
+recvMax = 4096
 
 logID :: String
 logID = "MulticastDiscovery"
@@ -60,23 +70,30 @@ sendPoolMsg msg =
 queryPool :: IO [(Name, HostAddress, PortNumber)]
 queryPool =
 -- ^search for peers on the network, return their names and addresses + tcp ports
-    bracket
-      (socket AF_INET Datagram defaultProtocol)
-      close
-      (\sock -> do
-          -- address on which we will listen for responses to our
-          -- query
-          let returnAddr = SockAddrInet queryResponsePort (tupleToHostAddress (0, 0, 0, 0))
+    retryNTimes poolQueryingRetries
+    -- ^retry, if no peers have been found
+      (bracket
+          (socket AF_INET Datagram defaultProtocol)
+          close
+          (\sock -> do
+              -- address on which we will listen for responses to our
+              -- query
+              let returnAddr = SockAddrInet queryResponsePort (tupleToHostAddress (0, 0, 0, 0))
 
-          bind sock returnAddr
+              bind sock returnAddr
 
-          -- ping all peers (multicast)
-          (sendPoolMsg . show) Ping
+              -- ping all peers (multicast)
+              (sendPoolMsg . show) Ping
 
-          -- collect all responses within a fixed timeout
-          responses <- gatherInput queryTimeout (recvFrom sock 100)
+              -- wait for the first response with twice the timeout
+              firstResponse <- timeout (2*queryTimeout) (recvFrom sock recvMax)
+              -- collect more responses within a fixed timeout
+              additionalResponses <- gatherInput queryTimeout (recvFrom sock recvMax)
 
-          (pure . mapMaybe extractResponse) responses
+              let responses = (maybeToList firstResponse) ++ additionalResponses
+
+              (pure . mapMaybe extractResponse) responses
+            )
         )
   where
     extractResponse :: (ByteString, SockAddr) -> Maybe (Name, HostAddress, PortNumber)
@@ -88,6 +105,17 @@ queryPool =
         ) msg
     extractResponse _ = Nothing
 
+    retryNTimes :: Natural -> IO [a] -> IO [a]
+    retryNTimes 0 action = action
+    retryNTimes retries action = do
+    -- ^repeat the given action, until a non empty list is returned, or the action
+    --  has been retried n times already (n == `retries`)
+      result <- action
+      if null result then
+        retryNTimes (retries - 1) action
+      else
+        pure result
+
 listenForPingUnsafe :: Socket -> IO (Maybe HostAddress)
 listenForPingUnsafe sock = do
 -- ^listen for a ping on the given socket and return the sender address
@@ -95,7 +123,7 @@ listenForPingUnsafe sock = do
     logID
     "Listening for udp pings..."
 
-  (msg, addr@(SockAddrInet _ remoteIp)) <- recvFrom sock 100
+  (msg, addr@(SockAddrInet _ remoteIp)) <- recvFrom sock recvMax
 
   debugM
     logID
