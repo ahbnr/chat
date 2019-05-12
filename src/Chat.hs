@@ -12,6 +12,8 @@ import Utils (addrToString, onUserInterrupt)
 
 import TaskManager (TaskManager, manage, wait, withTaskManager)
 
+import Discovery (discoverPeers, makeVisible)
+
 import IODrivers (initIODrivers)
 
 import Network.Socket (
@@ -81,11 +83,9 @@ initDiscoveryService name tcpPort tm = do
 -- ^runs a thread which will answer to other peers, searching for us on the network
   debugM Chat.logID "Listening for discovery udp pings..."
 
-  -- this asynchronously launched background service will answer
+  -- these asynchronously launched background services will answer
   -- discovery requests from other peers
-  manage tm (
-      pingListenerServiceUnsafe name tcpPort
-    )
+  makeVisible name tcpPort tm [pingListenerServiceUnsafe]
 
 connectToPeers :: String -> TMChan ByteString -> TMChan ByteString -> TaskManager () -> [(String, HostAddress, PortNumber)] -> IO ()
 connectToPeers ownName inputChan stdoutChan tm =
@@ -130,7 +130,7 @@ initPeer name inputDriver =
               initDiscoveryService name tcpPort tm
 
               -- search for other peers, so that we may connect to them
-              peers <- queryPool
+              peers <- discoverPeers [queryPool]
               debugM
                 Chat.logID
                 (concat ["Found the following peers: ", show peers])

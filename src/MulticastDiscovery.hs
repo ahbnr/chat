@@ -30,9 +30,7 @@ import System.Log.Logger (debugM)
 
 import Utils (gatherInput, Microseconds, allowCancel)
 
-type Name = String
-data Request = Ping deriving (Show, Read)
-data Response = Pong String PortNumber deriving (Show, Read)
+import Discovery (Name, Request(Ping), Response(Pong), DiscoveryReceiver, DiscoverySender)
 
 poolGrp :: String
 poolGrp = "230.42.42.42"
@@ -57,7 +55,7 @@ sendPoolMsg msg =
     (close . fst)
     (\(sock, addr) -> void (sendTo sock (pack msg) addr))
 
-queryPool :: IO [(Name, HostAddress, PortNumber)]
+queryPool :: DiscoverySender
 queryPool =
 -- ^search for peers on the network, return their names and addresses + tcp ports
     bracket
@@ -127,7 +125,7 @@ answerPingUnsafe sock name tcpPort remoteIp = do
         responseAddr
     )
 
-pingListenerServiceUnsafe :: Name -> PortNumber -> IO()
+pingListenerServiceUnsafe :: DiscoveryReceiver
 pingListenerServiceUnsafe name tcpPort =
 -- ^listen for pings and answer them in an endless loop
   (allowCancel . bracket
