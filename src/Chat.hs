@@ -1,6 +1,7 @@
 module Chat where
 
-import MulticastDiscovery (pingListenerServiceUnsafe, queryPool)
+import qualified MulticastDiscovery
+import qualified BroadcastDiscovery
 
 import Connections (
       prepareServerSock
@@ -78,14 +79,14 @@ initServer inputChan stdoutChan tm = do
   -- return the used tcp port and a handle to the server thread
   pure tcpPort
 
-initDiscoveryService :: String -> PortNumber -> TaskManager () -> IO ()
-initDiscoveryService name tcpPort tm = do
+initDiscoveryServices :: String -> PortNumber -> TaskManager () -> IO ()
+initDiscoveryServices name tcpPort tm = do
 -- ^runs a thread which will answer to other peers, searching for us on the network
   debugM Chat.logID "Listening for discovery udp pings..."
 
   -- these asynchronously launched background services will answer
   -- discovery requests from other peers
-  makeVisible name tcpPort tm [pingListenerServiceUnsafe]
+  makeVisible name tcpPort tm [MulticastDiscovery.receiver, BroadcastDiscovery.receiver]
 
 connectToPeers :: String -> TMChan ByteString -> TMChan ByteString -> TaskManager () -> [(String, HostAddress, PortNumber)] -> IO ()
 connectToPeers ownName inputChan stdoutChan tm =
@@ -127,10 +128,10 @@ initPeer name inputDriver =
         withTaskManager (\tm -> do
               tcpPort <- initServer inputChan stdoutChan tm
 
-              initDiscoveryService name tcpPort tm
+              initDiscoveryServices name tcpPort tm
 
               -- search for other peers, so that we may connect to them
-              peers <- discoverPeers [queryPool]
+              peers <- discoverPeers [MulticastDiscovery.sender, BroadcastDiscovery.sender]--queryPool]
               debugM
                 Chat.logID
                 (concat ["Found the following peers: ", show peers])
