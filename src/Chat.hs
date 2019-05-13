@@ -131,7 +131,7 @@ initPeer name inputDriver =
               initDiscoveryServices name tcpPort tm
 
               -- search for other peers, so that we may connect to them
-              peers <- discoverPeers [MulticastDiscovery.sender, BroadcastDiscovery.sender]--queryPool]
+              peers <- discoverPeers [MulticastDiscovery.sender, BroadcastDiscovery.sender]
               debugM
                 Chat.logID
                 (concat ["Found the following peers: ", show peers])

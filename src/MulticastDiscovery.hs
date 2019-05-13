@@ -33,7 +33,7 @@ import Utils (gatherInput, Microseconds, allowCancel)
 import Discovery (senderTemplate, receiverTemplate, Name, Request(Ping), Response(Pong), DiscoveryReceiver, DiscoverySender)
 
 poolGrp :: String
-poolGrp = "230.42.42.42"
+poolGrp = "239.42.42.42"
 
 listenPort :: PortNumber
 listenPort = 4242
