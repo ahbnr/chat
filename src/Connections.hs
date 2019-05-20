@@ -16,7 +16,7 @@ import Control.Concurrent.STM (atomically)
 import Control.Concurrent.STM.TMChan (dupTMChan, TMChan)
 
 import Data.Conduit.TMChan (sinkTMChan, sourceTMChan, isClosedTMChan)
-
+import Data.Either.Combinators (rightToMaybe)
 import Data.ByteString.Char8 (
       pack
     , ByteString
@@ -28,6 +28,7 @@ import Network.Socket (
     , bind
     , accept
     , listen
+    , connect
     , getAddrInfo
     , addrAddress
     , defaultProtocol
@@ -35,11 +36,14 @@ import Network.Socket (
     , Family(AF_INET)
     , Socket
     , PortNumber
+    , HostAddress
+    , SockAddr(SockAddrInet)
   )
 
 import System.Log.Logger (debugM)
 
-import Control.Exception (finally)
+import Control.Exception (finally, try)
+import Control.Exception.Base (IOException)
 import Control.Monad (void, forever, when)
 
 import TaskManager (withTaskManager, manage, wait)
@@ -85,6 +89,20 @@ prepareServerSock addr port = do
 
   pure sock
 
+prepareClientSock :: HostAddress -> PortNumber -> IO (Maybe Socket)
+-- ^prepare a socket which is connected to the given address/port
+prepareClientSock addr port = (
+      fmap rightToMaybe
+    . (try :: IO Socket -> IO (Either IOException Socket))
+  ) $ do
+    -- create tcp socket
+    sock <- socket AF_INET Stream defaultProtocol
+
+    -- connect socket
+    connect sock (SockAddrInet port addr)
+
+    pure sock
+
 server :: Socket -> TMChan ByteString -> TMChan ByteString -> IO()
 server sock inputChan stdoutChan =
 -- accept all incoming connections on the given socket and
@@ -114,8 +132,14 @@ server sock inputChan stdoutChan =
           )
       )
 
-client :: Address -> PortNumber -> TMChan ByteString -> TMChan ByteString -> IO()
-client addr port msgInC msgOutC =
+client :: [HostAddress] -> PortNumber -> TMChan ByteString -> TMChan ByteString -> IO()
+client [] _ _ _ = do
+  threadId <- myThreadId
+
+  debugM
+    Connections.logID
+    (concat ["Client (", show threadId, ") could not connect to any address. Giving up on this peer."])
+client (fstAddr:addrs) port msgInC msgOutC =
 -- ^connect to another peer and display its messages on application output (msgOutC,
 --  usually stdout) and redirect application input (msgInC, usually stdin) to it
   allowCancel (do
@@ -123,31 +147,35 @@ client addr port msgInC msgOutC =
 
       debugM
         Connections.logID
-        (concat ["Connecting as client (", show threadId, ") to ", show addr, ":", show port, "..."])
+        (concat ["Connecting as client (", show threadId, ") to ", show fstAddr, ":", show port, "..."])
 
-      runTCPClient
-        (clientSettings (fromIntegral port) (pack addr))
-        (\connection ->
-            onCancel
-              (do
-                  debugM
-                      Connections.logID
-                      (concat ["Connection to ", show addr, ":", show port, " was cancelled by application shutdown.",
-                                "\n", "Trying to flush input into connection before terminating, if the corresponding channel was closed."])
+      maybeSock <- prepareClientSock fstAddr port 
+      case maybeSock of
+        Just connection -> do
+          onCancel
+            (do
+                debugM
+                    Connections.logID
+                    (concat ["Connection to ", show fstAddr, ":", show port, " was cancelled by application shutdown.",
+                              "\n", "Trying to flush input into connection before terminating, if the corresponding channel was closed."])
 
-                  closed <- atomically (isClosedTMChan msgInC)
-                    
-                  when
-                    closed
-                    (runConduit $ sourceTMChan msgInC .| appSink connection)
-                )
-              (withTaskManager
-                  (\tm -> do
-                      manage tm ((allowCancel . runConduit) $ sourceTMChan msgInC .| appSink connection)
-                      manage tm ((allowCancel . runConduit) $ appSource connection .| sinkTMChan msgOutC)
+                closed <- atomically (isClosedTMChan msgInC)
+                  
+                when
+                  closed
+                  (runConduit $ sourceTMChan msgInC .| sinkSocket connection)
+              )
+            (withTaskManager
+                (\tm -> do
+                    manage tm ((allowCancel . runConduit) $ sourceTMChan msgInC .| sinkSocket connection)
+                    manage tm ((allowCancel . runConduit) $ sourceSocket connection .| sinkTMChan msgOutC)
 
-                      (void . wait) tm
-                    )
-                )
-          )
+                    (void . wait) tm
+                  )
+              )
+        Nothing -> do
+          debugM
+            Connections.logID
+            (concat ["Failed to connect to ", show fstAddr, ":", show port, " as client (", show threadId, ")"])
+          client addrs port msgInC msgOutC
     )

@@ -2,6 +2,7 @@ module Chat where
 
 import qualified MulticastDiscovery
 import qualified BroadcastDiscovery
+import qualified IrcDiscovery
 
 import Connections (
       prepareServerSock
@@ -86,15 +87,15 @@ initDiscoveryServices name tcpPort tm = do
 
   -- these asynchronously launched background services will answer
   -- discovery requests from other peers
-  makeVisible name tcpPort tm [MulticastDiscovery.receiver, BroadcastDiscovery.receiver]
+  makeVisible name tcpPort tm [MulticastDiscovery.receiver, BroadcastDiscovery.receiver, IrcDiscovery.receiver]
 
-connectToPeers :: String -> TMChan ByteString -> TMChan ByteString -> TaskManager () -> [(String, HostAddress, PortNumber)] -> IO ()
+connectToPeers :: String -> TMChan ByteString -> TMChan ByteString -> TaskManager () -> [(String, [HostAddress], PortNumber)] -> IO ()
 connectToPeers ownName inputChan stdoutChan tm =
 -- ^connects to each peer in a given list by spawning client threads
-      mapM_ (\(_, remoteIp, tcpPort) -> do
+      mapM_ (\(_, remoteIps, tcpPort) -> do
               debugM
                 Chat.logID
-                (concat ["Connecting to ", show remoteIp])
+                (concat ["Connecting to one of ", show remoteIps])
 
               -- duplicate input (stdin or file) to be redirected to the current client
               clientStdinChan <- atomically (dupTMChan inputChan)
@@ -102,7 +103,7 @@ connectToPeers ownName inputChan stdoutChan tm =
               -- this client thread will connect to the peer,
               -- redirect input to it and its messages to our stdout
               manage tm (client
-                  (addrToString remoteIp)
+                  remoteIps
                   tcpPort
                   clientStdinChan
                   stdoutChan
@@ -131,11 +132,10 @@ initPeer name inputDriver =
               initDiscoveryServices name tcpPort tm
 
               -- search for other peers, so that we may connect to them
-              peers <- discoverPeers [MulticastDiscovery.sender, BroadcastDiscovery.sender]
+              peers <- discoverPeers [MulticastDiscovery.sender, BroadcastDiscovery.sender, IrcDiscovery.sender name]
               debugM
                 Chat.logID
                 (concat ["Found the following peers: ", show peers])
-
 
               debugM
                 Chat.logID

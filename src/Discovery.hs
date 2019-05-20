@@ -35,7 +35,7 @@ type Name = String
 data Request = Ping deriving (Show, Read)
 data Response = Pong String PortNumber deriving (Show, Read)
 
-type Peer = (Name, HostAddress, PortNumber)
+type Peer = (Name, [HostAddress], PortNumber)
 
 type DiscoverySender = IO [Peer]
 type DiscoveryReceiver = Name -> PortNumber -> IO()
@@ -79,10 +79,10 @@ senderTemplate queryResponsePort singleQuery =
           (pure . mapMaybe extractResponse) responses
         )
   where
-    extractResponse :: (ByteString, SockAddr) -> Maybe (Name, HostAddress, PortNumber)
+    extractResponse :: (ByteString, SockAddr) -> Maybe (Name, [HostAddress], PortNumber)
     extractResponse (msg, SockAddrInet _ ip) =
     -- ^interpret a received message and return data about sender, if valid
-      (   fmap (\(Pong name port) -> (name, ip, port))
+      (   fmap (\(Pong name port) -> (name, [ip], port))
           . readMaybe
           . unpack
         ) msg
