@@ -24,18 +24,22 @@ import Discovery (senderTemplate, receiverTemplate, Name, Request(Ping), Respons
 import Control.Lens.Operators ((%~), (.~))
 import Network.Socket (PortNumber, HostAddress, tupleToHostAddress)
 import Network.Info (getNetworkInterfaces, NetworkInterface(NetworkInterface), IPv4(IPv4), ipv4)
-import Network.IRC.Client (EventHandler(EventHandler), matchType, matchNumeric, runClient, runClientWith, runIRCAction, newIRCState, defaultInstanceConfig, plainConnection, channels, handlers, onconnect, Message(Privmsg), send, logfunc, stdoutLogger)
+import Network.IRC.Client (IRC, EventHandler(EventHandler), matchType, matchNumeric, runClient, runClientWith, runIRCAction, newIRCState, defaultInstanceConfig, tlsConnection, TLSConfig(WithDefaultConfig), channels, handlers, ondisconnect, onconnect, Message(Privmsg), send, logfunc, stdoutLogger)
 import Network.IRC.Client.Events (Source(User, Server, Channel))
 import Network.IRC.Conduit.Lens (_Privmsg, _Join)
 import Network.IRC.CTCP (getUnderlyingByteString)
-import Conduit (liftIO)
+import Conduit (liftIO, throwM)
 
 import Control.Concurrent.Async (async, cancel)
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.STM.TMChan (TMChan, newTMChan, closeTMChan, writeTMChan, readTMChan)
+import Control.Concurrent.STM.TMVar (TMVar, newEmptyTMVar, putTMVar, tryTakeTMVar, readTMVar)
+import Control.Concurrent.STM (STM)
 import Control.Monad.STM (atomically)
 import Control.Monad.State (get)
 import Control.Monad (void)
+
+import Control.Exception (SomeException)
 
 import Data.Conduit.TMChan (sourceTMChan)
 import Data.Conduit.List (consume)
@@ -47,11 +51,14 @@ import Numeric (showHex)
 import Debug.Trace (traceShowId)
 
 queryTimeout :: Microseconds
-queryTimeout = 12000000
+queryTimeout = 1000000
 
 data IRCRequest = IRCPing deriving (Show, Read)
 data IRCResponse = IRCPong String [HostAddress] PortNumber deriving (Show, Read)
--- ^ Name [(Addresses, Ports)]
+-- ^Name [(Addresses, Ports)]
+
+type ClientState = (TMChan IRCResponse, TMVar Bool)
+-- ^(collected responses, flag, whether client has connected and joined discovery channel yet)
 
 logID :: String
 logID = "IrcDiscovery"
@@ -67,28 +74,39 @@ normalizeNick name =
           (Data.ByteString.unpack $ hash 7 mempty (Data.ByteString.Char8.pack name))
       ]
 
-sender :: TMChan IRCResponse -> DiscoverySender
-sender discoveryStream = do
+sender :: ClientState -> DiscoverySender
+sender (discoveryStream, joinedStatus) = do
   debugM
     IrcDiscovery.logID
-    (concat ["Waiting for results of IRCPing, which will be send by the IRC client thread. Waiting ", show queryTimeout, " milliseconds"])
+    "Waiting for the IRC client to be connected and also until it joined the discovery channel."
 
-  threadDelay queryTimeout
+  joined <- atomically $ readTMVar joinedStatus
+  if not joined then do
+    debugM
+      IrcDiscovery.logID
+      "IRC client failed to connect and join channel. Aborting sending IRCPing."
+    pure []
+  else do
+    debugM
+      IrcDiscovery.logID
+      (concat ["Waiting for results of IRCPing, which will be send by the IRC client thread. Waiting ", show queryTimeout, " milliseconds"])
 
-  debugM
-    IrcDiscovery.logID
-    "Waiting time is up. Collecting responses."
+    threadDelay queryTimeout
 
-  atomically $ closeTMChan discoveryStream
-  responses <- runConduit $ sourceTMChan discoveryStream .| consume
+    debugM
+      IrcDiscovery.logID
+      "Waiting time is up. Collecting responses."
 
-  debugM
-    IrcDiscovery.logID
-    (concat ["The following peers responded: ", show [name | (IRCPong name _ _) <- responses]])
+    atomically $ closeTMChan discoveryStream
+    responses <- runConduit $ sourceTMChan discoveryStream .| consume
 
-  pure [(name, addrs, port) | (IRCPong name addrs port) <- responses]
+    debugM
+      IrcDiscovery.logID
+      (concat ["The following peers responded: ", show [name | (IRCPong name _ _) <- responses]])
 
-pingService :: Text -> EventHandler a
+    pure [(name, addrs, port) | (IRCPong name addrs port) <- responses]
+
+pingService :: Text -> EventHandler ClientState
 pingService nick = EventHandler
     (matchType _Join)
     (\source channelName -> do
@@ -104,11 +122,25 @@ pingService nick = EventHandler
                 "Joined the discovery channel. Sending IRCPing."
 
               send (Privmsg channelName ((Right . Data.Text.pack . show) IRCPing))
+
+              (_, joinedStatus) <- get
+              (liftIO . atomically . setTMVar joinedStatus) True
+
+              liftIO $ debugM
+                IrcDiscovery.logID
+                "Client status set to `joined`"
+
+              pure ()
             | otherwise -> pure ()
           _ -> pure ()
     )
 
-pongReceiveService :: EventHandler (TMChan IRCResponse)
+setTMVar :: TMVar a -> a -> STM ()
+setTMVar var val = do
+  void $ tryTakeTMVar var
+  putTMVar var val
+
+pongReceiveService :: EventHandler ClientState
 pongReceiveService = EventHandler
     (matchType _Privmsg)
     (\_ msg -> do
@@ -122,7 +154,7 @@ pongReceiveService = EventHandler
               IrcDiscovery.logID
               (concat ["The PRIVMSG contained an IRCPong from ", peerName, ". Collecting addresses."])
 
-            chan <- get
+            (chan, _) <- get
             (liftIO . atomically . writeTMChan chan) response
           Nothing -> pure ()
       )
@@ -134,11 +166,12 @@ pongReceiveService = EventHandler
           . rightToMaybe
         ) eitherCTCPOrMsg
 
-receiver :: TMChan IRCResponse -> DiscoveryReceiver
-receiver discoveryStream name tcpPort =
+receiver :: ClientState -> DiscoveryReceiver
+receiver initialState name tcpPort =
   let
     nick = normalizeNick name
-    conn = plainConnection (Data.ByteString.Char8.pack "chat.freenode.net") 6667
+    conn = tlsConnection (WithDefaultConfig (Data.ByteString.Char8.pack "chat.freenode.net") 6697)
+            & ondisconnect .~ onDisconnect
             -- & logfunc .~ stdoutLogger
     cfg = defaultInstanceConfig nick
             & channels .~ [Data.Text.pack "##hs-cli-chat-discovery"]
@@ -149,7 +182,7 @@ receiver discoveryStream name tcpPort =
           IrcDiscovery.logID
           (concat ["Starting IRC client. Connecting as ", Data.Text.unpack nick, "."])
 
-        runClient conn cfg discoveryStream
+        runClient conn cfg initialState
       )
 
 pongService :: String -> PortNumber -> EventHandler a
@@ -185,6 +218,18 @@ pongService name tcpPort = EventHandler
             . rightToMaybe
           ) eitherCTCPOrMsg
 
+onDisconnect :: Maybe SomeException -> IRC ClientState ()
+onDisconnect (Just exc) = do
+  liftIO $ debugM
+    IrcDiscovery.logID
+    (concat ["Disconnecting IRC due to the following exception: ", show exc])
+
+  (_, joinedStatus) <- get
+  (liftIO . atomically . setTMVar joinedStatus) False
+
+  throwM exc
+onDisconnect Nothing = pure ()
+
 getAddresses :: IO [HostAddress]
 getAddresses = fmap (map (tupleToHostAddress . word8s . (\(IPv4 ip) -> ip) . ipv4)) getNetworkInterfaces
   where
@@ -198,4 +243,7 @@ getAddresses = fmap (map (tupleToHostAddress . word8s . (\(IPv4 ip) -> ip) . ipv
 genIrcDiscovery :: IO (DiscoverySender, DiscoveryReceiver)
 genIrcDiscovery = do
   discoveryStream <- atomically newTMChan
-  pure (sender discoveryStream, receiver discoveryStream)
+  joined <- atomically newEmptyTMVar
+  let state = (discoveryStream, joined)
+
+  pure (sender state, receiver state)
