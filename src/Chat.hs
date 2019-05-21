@@ -131,10 +131,10 @@ initPeer name inputDriver =
               tcpPort <- initServer inputChan stdoutChan tm
 
               (ircSender, ircReceiver) <- IrcDiscovery.genIrcDiscovery name
-              initDiscoveryServices name tcpPort tm [MulticastDiscovery.receiver, BroadcastDiscovery.receiver, ircReceiver]
+              initDiscoveryServices name tcpPort tm [ircReceiver] --MulticastDiscovery.receiver, BroadcastDiscovery.receiver, ircReceiver]
 
               -- search for other peers, so that we may connect to them
-              peers <- discoverPeers [MulticastDiscovery.sender, BroadcastDiscovery.sender, ircSender]
+              peers <- discoverPeers [ircSender]--MulticastDiscovery.sender, BroadcastDiscovery.sender, ircSender]
               debugM
                 Chat.logID
                 (concat ["Found the following peers: ", show peers])

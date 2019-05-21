@@ -42,7 +42,7 @@ import Network.Socket (
 
 import System.Log.Logger (debugM)
 
-import Control.Exception (finally, try)
+import Control.Exception (uninterruptibleMask, finally, try)
 import Control.Exception.Base (IOException)
 import Control.Monad (void, forever, when)
 
@@ -142,7 +142,11 @@ client [] _ _ _ = do
 client (fstAddr:addrs) port msgInC msgOutC =
 -- ^connect to another peer and display its messages on application output (msgOutC,
 --  usually stdout) and redirect application input (msgInC, usually stdin) to it
-  allowCancel (do
+  uninterruptibleMask (\restore -> do
+  -- ^prevent async cancellation until connection is established so that we are
+  --  able to flush the remaining data into the connection before shutdown.
+  --  If another thread tries to shut down the application, it will be blocked,
+  --  until `restore` has been called.
       threadId <- myThreadId
 
       debugM
@@ -165,12 +169,15 @@ client (fstAddr:addrs) port msgInC msgOutC =
                   closed
                   (runConduit $ sourceTMChan msgInC .| sinkSocket connection)
               )
-            (withTaskManager
-                (\tm -> do
-                    manage tm ((allowCancel . runConduit) $ sourceTMChan msgInC .| sinkSocket connection)
-                    manage tm ((allowCancel . runConduit) $ sourceSocket connection .| sinkTMChan msgOutC)
+            (restore
+            -- ^reenable async cancellation
+                (withTaskManager
+                    (\tm -> do
+                        manage tm ((allowCancel . runConduit) $ sourceTMChan msgInC .| sinkSocket connection)
+                        manage tm ((allowCancel . runConduit) $ sourceSocket connection .| sinkTMChan msgOutC)
 
-                    (void . wait) tm
+                        (void . wait) tm
+                      )
                   )
               )
         Nothing -> do
