@@ -67,20 +67,42 @@ normalizeNick name =
           (Data.ByteString.unpack $ hash 7 mempty (Data.ByteString.Char8.pack name))
       ]
 
-sender :: TMChan IRCResponse -> String -> DiscoverySender
-sender discoveryStream name = do
+sender :: TMChan IRCResponse -> DiscoverySender
+sender discoveryStream = do
+  debugM
+    IrcDiscovery.logID
+    (concat ["Waiting for results of IRCPing, which will be send by the IRC client thread. Waiting ", show queryTimeout, " milliseconds"])
+
   threadDelay queryTimeout
+
+  debugM
+    IrcDiscovery.logID
+    "Waiting time is up. Collecting responses."
+
   atomically $ closeTMChan discoveryStream
   responses <- runConduit $ sourceTMChan discoveryStream .| consume
+
+  debugM
+    IrcDiscovery.logID
+    (concat ["The following peers responded: ", show [name | (IRCPong name _ _) <- responses]])
+
   pure [(name, addrs, port) | (IRCPong name addrs port) <- responses]
 
 pingService :: Text -> EventHandler a
 pingService nick = EventHandler
     (matchType _Join)
-    (\source channelName -> 
+    (\source channelName -> do
+        liftIO $ debugM
+          IrcDiscovery.logID
+          (concat ["Received a JOIN message from ", show source, ". Joined ", Data.Text.unpack channelName])
+
         case source of
           Channel _ joinedNick
             | (nick == joinedNick) && (channelName == (Data.Text.pack "##hs-cli-chat-discovery")) -> do
+              liftIO $ debugM
+                IrcDiscovery.logID
+                "Joined the discovery channel. Sending IRCPing."
+
               send (Privmsg channelName ((Right . Data.Text.pack . show) IRCPing))
             | otherwise -> pure ()
           _ -> pure ()
@@ -90,8 +112,16 @@ pongReceiveService :: EventHandler (TMChan IRCResponse)
 pongReceiveService = EventHandler
     (matchType _Privmsg)
     (\_ msg -> do
+        liftIO $ debugM
+          IrcDiscovery.logID
+          (concat ["pongReceiveService: Received a PRIVMSG: ", show msg])
+
         case receivePong msg of
           Just response@(IRCPong peerName addresses port) -> do
+            liftIO $ debugM
+              IrcDiscovery.logID
+              (concat ["The PRIVMSG contained an IRCPong from ", peerName, ". Collecting addresses."])
+
             chan <- get
             (liftIO . atomically . writeTMChan chan) response
           Nothing -> pure ()
@@ -114,7 +144,11 @@ receiver discoveryStream name tcpPort =
             & channels .~ [Data.Text.pack "##hs-cli-chat-discovery"]
             & handlers %~ (++ [pongService name tcpPort, pingService nick, pongReceiveService])
   in do
-    allowCancel (
+    allowCancel (do
+        liftIO $ debugM
+          IrcDiscovery.logID
+          (concat ["Starting IRC client. Connecting as ", Data.Text.unpack nick, "."])
+
         runClient conn cfg discoveryStream
       )
 
@@ -122,8 +156,16 @@ pongService :: String -> PortNumber -> EventHandler a
 pongService name tcpPort = EventHandler
     (matchType _Privmsg)
     (\source msg -> do
+      liftIO $ debugM
+        IrcDiscovery.logID
+        (concat ["pongService: Received a PRIVMSG: ", show msg])
+
       case receivePing source msg of
         Just nick -> do
+          liftIO $ debugM
+            IrcDiscovery.logID
+            (concat ["The received PRIVMSG was an IRCPing from ", Data.Text.unpack nick, ". Answering with IRCPong."])
+
           addresses <- liftIO getAddresses
           send (Privmsg nick ((Right . Data.Text.pack . show) (IRCPong name addresses tcpPort)))
         _ -> pure ()
@@ -153,7 +195,7 @@ getAddresses = fmap (map (tupleToHostAddress . word8s . (\(IPv4 ip) -> ip) . ipv
                , fromIntegral $ x `shiftR` 16
                , fromIntegral $ x `shiftR` 24 )
 
-genIrcDiscovery :: String -> IO (DiscoverySender, DiscoveryReceiver)
-genIrcDiscovery name = do
+genIrcDiscovery :: IO (DiscoverySender, DiscoveryReceiver)
+genIrcDiscovery = do
   discoveryStream <- atomically newTMChan
-  pure (sender discoveryStream name, receiver discoveryStream)
+  pure (sender discoveryStream, receiver discoveryStream)

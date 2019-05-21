@@ -130,7 +130,7 @@ initPeer name inputDriver =
         withTaskManager (\tm -> do
               tcpPort <- initServer inputChan stdoutChan tm
 
-              (ircSender, ircReceiver) <- IrcDiscovery.genIrcDiscovery name
+              (ircSender, ircReceiver) <- IrcDiscovery.genIrcDiscovery
               initDiscoveryServices name tcpPort tm [ircReceiver] --MulticastDiscovery.receiver, BroadcastDiscovery.receiver, ircReceiver]
 
               -- search for other peers, so that we may connect to them

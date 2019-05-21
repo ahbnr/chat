@@ -1,7 +1,10 @@
 module Main where
 
 import Chat (initPeer, logID)
+import Discovery (logID)
 import MulticastDiscovery (logID)
+import BroadcastDiscovery (logID)
+import IrcDiscovery (logID)
 import Connections (logID)
 import TaskManager (logID)
 import IODrivers (driveStdin, driveFileInput, logID)
@@ -93,7 +96,10 @@ processOptions (Options debugFlag inputFile name) = do
   when
     debugFlag 
     (do
+        updateGlobalLogger Discovery.logID (setLevel DEBUG)
         updateGlobalLogger MulticastDiscovery.logID (setLevel DEBUG)
+        updateGlobalLogger BroadcastDiscovery.logID (setLevel DEBUG)
+        updateGlobalLogger IrcDiscovery.logID (setLevel DEBUG)
         updateGlobalLogger Main.logID (setLevel DEBUG)
         updateGlobalLogger Chat.logID (setLevel DEBUG)
         updateGlobalLogger Connections.logID (setLevel DEBUG)
