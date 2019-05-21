@@ -1,5 +1,6 @@
 module Chat where
 
+import Discovery (DiscoveryReceiver)
 import qualified MulticastDiscovery
 import qualified BroadcastDiscovery
 import qualified IrcDiscovery
@@ -80,14 +81,14 @@ initServer inputChan stdoutChan tm = do
   -- return the used tcp port and a handle to the server thread
   pure tcpPort
 
-initDiscoveryServices :: String -> PortNumber -> TaskManager () -> IO ()
-initDiscoveryServices name tcpPort tm = do
+initDiscoveryServices :: String -> PortNumber -> TaskManager () -> [DiscoveryReceiver] -> IO ()
+initDiscoveryServices name tcpPort tm receivers = do
 -- ^runs a thread which will answer to other peers, searching for us on the network
   debugM Chat.logID "Listening for discovery udp pings..."
 
   -- these asynchronously launched background services will answer
   -- discovery requests from other peers
-  makeVisible name tcpPort tm [MulticastDiscovery.receiver, BroadcastDiscovery.receiver, IrcDiscovery.receiver]
+  makeVisible name tcpPort tm receivers
 
 connectToPeers :: String -> TMChan ByteString -> TMChan ByteString -> TaskManager () -> [(String, [HostAddress], PortNumber)] -> IO ()
 connectToPeers ownName inputChan stdoutChan tm =
@@ -129,10 +130,11 @@ initPeer name inputDriver =
         withTaskManager (\tm -> do
               tcpPort <- initServer inputChan stdoutChan tm
 
-              initDiscoveryServices name tcpPort tm
+              (ircSender, ircReceiver) <- IrcDiscovery.genIrcDiscovery name
+              initDiscoveryServices name tcpPort tm [MulticastDiscovery.receiver, BroadcastDiscovery.receiver, ircReceiver]
 
               -- search for other peers, so that we may connect to them
-              peers <- discoverPeers [MulticastDiscovery.sender, BroadcastDiscovery.sender, IrcDiscovery.sender name]
+              peers <- discoverPeers [MulticastDiscovery.sender, BroadcastDiscovery.sender, ircSender]
               debugM
                 Chat.logID
                 (concat ["Found the following peers: ", show peers])

@@ -15,7 +15,7 @@ provides=('chat')
 backup=()
 options=()
 install=
-source=('https://ahbnr.de/jenkins/job/chat/lastSuccessfulBuild/artifact/.stack-work/install/x86_64-linux/lts-12.8/8.4.3/bin/chat' 'https://ahbnr.de/jenkins/job/chat/lastSuccessfulBuild/artifact/version')
+source=('https://ahbnr.de/jenkins/job/chat-ircDiscovery/lastSuccessfulBuild/artifact/.stack-work/install/x86_64-linux/lts-12.8/8.4.3/bin/chat' 'https://ahbnr.de/jenkins/job/chat/lastSuccessfulBuild/artifact/version')
 noextract=()
 md5sums=('SKIP' 'SKIP')
 

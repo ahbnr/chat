@@ -57,31 +57,22 @@ logID :: String
 logID = "IrcDiscovery"
 
 normalizeNick :: String -> Text
+-- ^transforms the peer name into a valid IRC nick which is as unique as possible
+--  using the BLAKE2b hash function
 normalizeNick name = 
   (Data.Text.pack . concat)
     [
-        "P",
+        "P", -- irc nicks have to start with a non numeric character
         (concat . map (flip showHex "")) -- https://stackoverflow.com/a/8416189
           (Data.ByteString.unpack $ hash 7 mempty (Data.ByteString.Char8.pack name))
       ]
 
-sender :: String -> DiscoverySender
-sender name =
-  let
-    normalizedName = normalizeNick (name ++ "SEND")
-    conn = plainConnection (Data.ByteString.Char8.pack "chat.freenode.net") 6667
-            -- & logfunc .~ stdoutLogger
-    cfg = defaultInstanceConfig normalizedName
-            & channels .~ [Data.Text.pack "##hs-cli-chat-discovery"]
-            & handlers %~ (++ [pingService normalizedName, pongReceiveService])
-  in do
-    discoveryStream <- atomically newTMChan
-    client <- (async . allowCancel) $ runClient conn cfg discoveryStream
-    threadDelay queryTimeout
-    atomically $ closeTMChan discoveryStream
-    cancel client
-    responses <- runConduit $ sourceTMChan discoveryStream .| consume
-    pure [(name, addrs, port) | (IRCPong name addrs port) <- responses]
+sender :: TMChan IRCResponse -> String -> DiscoverySender
+sender discoveryStream name = do
+  threadDelay queryTimeout
+  atomically $ closeTMChan discoveryStream
+  responses <- runConduit $ sourceTMChan discoveryStream .| consume
+  pure [(name, addrs, port) | (IRCPong name addrs port) <- responses]
 
 pingService :: Text -> EventHandler a
 pingService nick = EventHandler
@@ -113,21 +104,21 @@ pongReceiveService = EventHandler
           . rightToMaybe
         ) eitherCTCPOrMsg
 
-receiver :: DiscoveryReceiver
-receiver name tcpPort =
+receiver :: TMChan IRCResponse -> DiscoveryReceiver
+receiver discoveryStream name tcpPort =
   let
-    normalizedName = normalizeNick (name ++ "RECV")
+    nick = normalizeNick name
     conn = plainConnection (Data.ByteString.Char8.pack "chat.freenode.net") 6667
             -- & logfunc .~ stdoutLogger
-    cfg = defaultInstanceConfig normalizedName
+    cfg = defaultInstanceConfig nick
             & channels .~ [Data.Text.pack "##hs-cli-chat-discovery"]
-            & handlers %~ ((pongService name tcpPort):)
+            & handlers %~ (++ [pongService name tcpPort, pingService nick, pongReceiveService])
   in do
     allowCancel (
-        runClient conn cfg ()
+        runClient conn cfg discoveryStream
       )
 
-pongService :: String -> PortNumber -> EventHandler ()
+pongService :: String -> PortNumber -> EventHandler a
 pongService name tcpPort = EventHandler
     (matchType _Privmsg)
     (\source msg -> do
@@ -161,3 +152,8 @@ getAddresses = fmap (map (tupleToHostAddress . word8s . (\(IPv4 ip) -> ip) . ipv
                , fromIntegral $ x `shiftR` 8
                , fromIntegral $ x `shiftR` 16
                , fromIntegral $ x `shiftR` 24 )
+
+genIrcDiscovery :: String -> IO (DiscoverySender, DiscoveryReceiver)
+genIrcDiscovery name = do
+  discoveryStream <- atomically newTMChan
+  pure (sender discoveryStream name, receiver discoveryStream)
