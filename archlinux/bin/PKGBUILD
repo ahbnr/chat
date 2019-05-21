@@ -1,6 +1,6 @@
 # Maintainer: ahbnr <anton.haubner@outlook.de>
 
-pkgname=chat-bin
+pkgname=chat-irc-bin
 pkgver=r22.f6c8a01
 pkgrel=1
 pkgdesc="Simple p2p cli chat application."
@@ -10,7 +10,7 @@ license=('GPL3')
 depends=('glibc>=2.28' 'zlib>=1.2.11' 'gmp>=6.1.2')
 makedepends=('curl')
 replaces=()
-conflicts=('chat-git')
+conflicts=('chat-git' 'chat-bin')
 provides=('chat')
 backup=()
 options=()

@@ -97,7 +97,7 @@ Packages for Arch Linux are also available:
 ### Pre-Built
 
 ```sh
-curl -O "https://raw.githubusercontent.com/ahbnr/chat/master/archlinux/bin/PKGBUILD"
+curl -O "https://raw.githubusercontent.com/ahbnr/chat/ircDiscovery/archlinux/bin/PKGBUILD"
 makepkg -s PKGBUILD
 sudo pacman -U chat*.pkg.tar.xz
 ```
@@ -105,7 +105,7 @@ sudo pacman -U chat*.pkg.tar.xz
 ### From source
 
 ```sh
-curl -O "https://raw.githubusercontent.com/ahbnr/chat/master/archlinux/git/PKGBUILD"
+curl -O "https://raw.githubusercontent.com/ahbnr/chat/ircDiscovery/archlinux/git/PKGBUILD"
 makepkg -s PKGBUILD
 sudo pacman -U chat*.pkg.tar.xz
 ```
