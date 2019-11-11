@@ -155,7 +155,7 @@ client (fstAddr:addrs) port msgInC msgOutC =
 
       maybeSock <- prepareClientSock fstAddr port 
       case maybeSock of
-        Just connection -> do
+        Just connection ->
           onCancel
             (do
                 debugM

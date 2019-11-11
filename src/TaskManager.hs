@@ -135,7 +135,7 @@ shutdown (TaskManager status) = do
     if isShutDown then
       debugM
         TaskManager.logID
-        (concat ["This TaskManager is already shutting down. Continueing."])
+        "This TaskManager is already shutting down. Continueing."
     else (do
         (
             mapM_ shutdownAction

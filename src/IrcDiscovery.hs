@@ -70,7 +70,7 @@ normalizeNick name =
   (Data.Text.pack . concat)
     [
         "P", -- irc nicks have to start with a non numeric character
-        (concat . map (flip showHex "")) -- https://stackoverflow.com/a/8416189
+        concatMap (`showHex` "") -- https://stackoverflow.com/a/8416189
           (Data.ByteString.unpack $ hash 7 mempty (Data.ByteString.Char8.pack name))
       ]
 
@@ -116,7 +116,7 @@ pingService nick = EventHandler
 
         case source of
           Channel _ joinedNick
-            | (nick == joinedNick) && (channelName == (Data.Text.pack "##hs-cli-chat-discovery")) -> do
+            | (nick == joinedNick) && (channelName == Data.Text.pack "##hs-cli-chat-discovery") -> do
               liftIO $ debugM
                 IrcDiscovery.logID
                 "Joined the discovery channel. Sending IRCPing."
@@ -176,7 +176,7 @@ receiver initialState name tcpPort =
     cfg = defaultInstanceConfig nick
             & channels .~ [Data.Text.pack "##hs-cli-chat-discovery"]
             & handlers %~ (++ [pongService name tcpPort, pingService nick, pongReceiveService])
-  in do
+  in
     allowCancel (do
         liftIO $ debugM
           IrcDiscovery.logID
@@ -210,7 +210,7 @@ pongService name tcpPort = EventHandler
           User nick -> nick
           Channel chan nick -> nick
           Server name -> name
-      in do
+      in
         (
               fmap (const sourceStr)
             . ((>>= readMaybe) :: Maybe String -> Maybe IRCRequest)
@@ -235,7 +235,7 @@ getAddresses = fmap (map (tupleToHostAddress . word8s . (\(IPv4 ip) -> ip) . ipv
   where
     -- Code taken from internal function of network-info:
     word8s :: Word32 -> (Word8, Word8, Word8, Word8)
-    word8s x = ( fromIntegral $ x
+    word8s x = ( fromIntegral   x
                , fromIntegral $ x `shiftR` 8
                , fromIntegral $ x `shiftR` 16
                , fromIntegral $ x `shiftR` 24 )

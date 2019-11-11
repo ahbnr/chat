@@ -1,6 +1,6 @@
 module Chat where
 
-import Discovery (DiscoveryReceiver)
+import Discovery (DiscoveryReceiver, discoverPeers, makeVisible)
 import qualified MulticastDiscovery
 import qualified BroadcastDiscovery
 import qualified IrcDiscovery
@@ -14,8 +14,6 @@ import Connections (
 import Utils (addrToString, onUserInterrupt)
 
 import TaskManager (TaskManager, manage, wait, withTaskManager)
-
-import Discovery (discoverPeers, makeVisible)
 
 import IODrivers (initIODrivers)
 

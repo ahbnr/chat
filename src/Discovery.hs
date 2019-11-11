@@ -53,7 +53,7 @@ discoverPeers =
   . sequence
 
 makeVisible :: Name -> PortNumber -> TaskManager () -> [DiscoveryReceiver] -> IO ()
-makeVisible name tcpPort tm = void . sequence . map (manage tm . (&) tcpPort . (&) name)
+makeVisible name tcpPort tm = void . mapM (manage tm . (&) tcpPort . (&) name)
 
 queryTimeout :: Microseconds
 queryTimeout = 1000000
