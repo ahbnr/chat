@@ -8,6 +8,7 @@ import IrcDiscovery (logID)
 import Connections (logID)
 import TaskManager (logID)
 import IODrivers (driveStdin, driveFileInput, logID)
+import Config (parseConfig)
 
 import System.Log.Logger (
       updateGlobalLogger
@@ -124,5 +125,8 @@ processOptions (Options debugFlag inputFile name) = do
     Main.logID
     (concat ["Initializing peer as '", identity, "'..."])
 
+  -- read config file
+  config <- parseConfig
+
   -- run the p2p chat program while identifiying with 'name' to other peers
-  initPeer identity inputDriver
+  initPeer config identity inputDriver

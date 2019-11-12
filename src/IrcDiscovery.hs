@@ -21,6 +21,8 @@ import Utils (takeUntilM, gatherInput, Microseconds, allowCancel)
 
 import Discovery (senderTemplate, receiverTemplate, Name, Request(Ping), Response(Pong), DiscoveryReceiver, DiscoverySender)
 
+import Config (IrcConfig (IrcConfig))
+
 import Control.Lens.Operators ((%~), (.~))
 import Network.Socket (PortNumber, HostAddress, tupleToHostAddress)
 import Network.Info (getNetworkInterfaces, NetworkInterface(NetworkInterface), IPv4(IPv4), ipv4)
@@ -51,7 +53,7 @@ import Numeric (showHex)
 import Debug.Trace (traceShowId)
 
 queryTimeout :: Microseconds
-queryTimeout = 1000000
+queryTimeout = 600000
 
 data IRCRequest = IRCPing deriving (Show, Read)
 data IRCResponse = IRCPong String [HostAddress] PortNumber deriving (Show, Read)
@@ -89,7 +91,7 @@ sender (discoveryStream, joinedStatus) = do
   else do
     debugM
       IrcDiscovery.logID
-      (concat ["Waiting for results of IRCPing, which will be send by the IRC client thread. Waiting ", show queryTimeout, " milliseconds"])
+      (concat ["Waiting for results of IRCPing, which will be send by the IRC client thread. Waiting ", show queryTimeout, " microseconds"])
 
     threadDelay queryTimeout
 
@@ -166,11 +168,11 @@ pongReceiveService = EventHandler
           . rightToMaybe
         ) eitherCTCPOrMsg
 
-receiver :: ClientState -> DiscoveryReceiver
-receiver initialState name tcpPort =
+receiver :: IrcConfig -> ClientState -> DiscoveryReceiver
+receiver (IrcConfig ircServer ircPort) initialState name tcpPort =
   let
     nick = normalizeNick name
-    conn = tlsConnection (WithDefaultConfig (Data.ByteString.Char8.pack "chat.freenode.net") 6697)
+    conn = tlsConnection (WithDefaultConfig (Data.ByteString.Char8.pack ircServer) ircPort)
             & ondisconnect .~ onDisconnect
             -- & logfunc .~ stdoutLogger
     cfg = defaultInstanceConfig nick
@@ -180,7 +182,7 @@ receiver initialState name tcpPort =
     allowCancel (do
         liftIO $ debugM
           IrcDiscovery.logID
-          (concat ["Starting IRC client. Connecting as ", Data.Text.unpack nick, "."])
+          (concat ["Starting IRC client. Connecting as ", Data.Text.unpack nick, " to ", ircServer, ":", show ircPort])
 
         runClient conn cfg initialState
       )
@@ -240,10 +242,10 @@ getAddresses = fmap (map (tupleToHostAddress . word8s . (\(IPv4 ip) -> ip) . ipv
                , fromIntegral $ x `shiftR` 16
                , fromIntegral $ x `shiftR` 24 )
 
-genIrcDiscovery :: IO (DiscoverySender, DiscoveryReceiver)
-genIrcDiscovery = do
+genIrcDiscovery :: IrcConfig -> IO (DiscoveryReceiver, DiscoverySender)
+genIrcDiscovery ircConfig = do
   discoveryStream <- atomically newTMChan
   joined <- atomically newEmptyTMVar
   let state = (discoveryStream, joined)
 
-  pure (sender state, receiver state)
+  pure (receiver ircConfig state, sender state)

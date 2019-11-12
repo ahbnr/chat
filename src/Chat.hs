@@ -5,6 +5,8 @@ import qualified MulticastDiscovery
 import qualified BroadcastDiscovery
 import qualified IrcDiscovery
 
+import Config (Config (Config), cfIrc)
+
 import Connections (
       prepareServerSock
     , server
@@ -32,6 +34,7 @@ import Control.Concurrent.STM.TMChan (
   )
 
 import Data.ByteString.Char8 (ByteString)
+import Data.Maybe (catMaybes)
 
 import System.Log.Logger (debugM)
 
@@ -110,9 +113,9 @@ connectToPeers ownName inputChan stdoutChan tm =
             )
     . filter (\(remoteName, _, _) -> remoteName /= ownName) -- dont connect to yourself
  
-initPeer :: String -> (TMChan ByteString -> TaskManager () -> IO ()) -> IO ()
+initPeer :: Config -> String -> (TMChan ByteString -> TaskManager () -> IO ()) -> IO ()
 -- ^initialize all procedures required to boot a fully functional chat peer
-initPeer name inputDriver =
+initPeer config name inputDriver =
   onUserInterrupt
     (   -- this UserInterrupt handler ensures application does not exit with error code on Ctrl-C
         -- and also prints a debug message, if the debug log is enabled.
@@ -128,11 +131,17 @@ initPeer name inputDriver =
         withTaskManager (\tm -> do
               tcpPort <- initServer inputChan stdoutChan tm
 
-              (ircSender, ircReceiver) <- IrcDiscovery.genIrcDiscovery
-              initDiscoveryServices name tcpPort tm [MulticastDiscovery.receiver, BroadcastDiscovery.receiver, ircReceiver]
+              maybeIrcSenderReceiver <-
+                case cfIrc config of
+                  Just ircConfig -> fmap Just (IrcDiscovery.genIrcDiscovery ircConfig)
+                  _ -> pure Nothing
+
+              let sendersAndReceivers = catMaybes [ Just (MulticastDiscovery.receiver, MulticastDiscovery.sender), Just (BroadcastDiscovery.receiver, BroadcastDiscovery.sender), maybeIrcSenderReceiver ]
+
+              initDiscoveryServices name tcpPort tm (map fst sendersAndReceivers)
 
               -- search for other peers, so that we may connect to them
-              peers <- discoverPeers [MulticastDiscovery.sender, BroadcastDiscovery.sender, ircSender]
+              peers <- discoverPeers (map snd sendersAndReceivers)
               debugM
                 Chat.logID
                 (concat ["Found the following peers: ", show peers])
