@@ -1,3 +1,6 @@
+-- enable template haskell to get git commit info at compile time
+{-# LANGUAGE TemplateHaskell #-}
+
 module Main where
 
 import Chat (initPeer, logID)
@@ -16,6 +19,8 @@ import System.Log.Logger (
     , Priority(DEBUG)
     , debugM
   )
+
+import GitHash
 
 import Options.Applicative (
       Parser
@@ -47,9 +52,10 @@ import Utils (genPeerId)
 -- was started with
 -- 
 -- d-Flag: Indicates, whether debug log messages shall be shown
+-- v-Flag: Indicates, whether version information shall be shown
 -- name-String: String, by which the chat peer shall identify itself to others
 data Options
-  = Options Bool (Maybe FilePath) (Maybe String)
+  = Options Bool Bool (Maybe FilePath) (Maybe String)
 
 -- Used to identify this file as source of log messages
 logID :: String
@@ -63,6 +69,11 @@ options = Options
          long "debug"
       <> short 'd'
       <> help "Print debugging logs"
+    )
+  <*> switch ( -- describe "-v" switch to output chat version
+         long "version"
+      <> short 'v'
+      <> help "Print version"
     )
   <*> optional (
       strOption
@@ -91,7 +102,7 @@ main = processOptions =<< execParser opts
 
 processOptions :: Options -> IO ()
 -- ^run the chat program and apply parsed cli options
-processOptions (Options debugFlag inputFile name) = do
+processOptions (Options debugFlag versionFlag inputFile name) = do
   -- if the debug flag is set, enable DEBUG level output
   -- for all loggers
   when
@@ -108,25 +119,29 @@ processOptions (Options debugFlag inputFile name) = do
         updateGlobalLogger IODrivers.logID (setLevel DEBUG)
       )
 
-  -- if a name is supplied on the cli, use it, otherwise,
-  -- try to generate one
-  identity <- maybe
-    genPeerId
-    pure
-    name
+  if versionFlag then do
+    let gi = $$tGitInfoCwd
+    (putStrLn . concat) ["Version ", giHash gi, ". Committed on ", giCommitDate gi]
+  else do
+    -- if a name is supplied on the cli, use it, otherwise,
+    -- try to generate one
+    identity <- maybe
+      genPeerId
+      pure
+      name
 
-  let {
-      inputDriver = case inputFile of
-        Nothing -> driveStdin
-        (Just path) -> driveFileInput path
-    }
+    let {
+        inputDriver = case inputFile of
+          Nothing -> driveStdin
+          (Just path) -> driveFileInput path
+      }
 
-  debugM
-    Main.logID
-    (concat ["Initializing peer as '", identity, "'..."])
+    debugM
+      Main.logID
+      (concat ["Initializing peer as '", identity, "'..."])
 
-  -- read config file
-  config <- parseConfig
+    -- read config file
+    config <- parseConfig
 
-  -- run the p2p chat program while identifiying with 'name' to other peers
-  initPeer config identity inputDriver
+    -- run the p2p chat program while identifiying with 'name' to other peers
+    initPeer config identity inputDriver
