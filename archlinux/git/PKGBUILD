@@ -15,7 +15,7 @@ provides=('chat')
 backup=()
 options=()
 install=
-source=('git+https://github.com/ahbnr/chat.git#branch=ircDiscovery')
+source=('git+https://github.com/ahbnr/chat.git#branch=master')
 noextract=()
 md5sums=('SKIP')
 

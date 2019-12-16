@@ -91,13 +91,13 @@ stack exec -- chat --file myFile
 
 ## Installation
 
-The latest Linux binary can be obtained from [here](https://ahbnr.de/jenkins/job/chat/lastSuccessfulBuild/artifact/.stack-work/install/x86_64-linux/lts-12.8/8.4.3/bin/chat).
+The latest Linux binary can be obtained from [here](https://ahbnr.de/jenkins/job/chat/lastSuccessfulBuild/artifact/chat).
 Packages for Arch Linux are also available:
 
 ### Pre-Built
 
 ```sh
-curl -O "https://raw.githubusercontent.com/ahbnr/chat/ircDiscovery/archlinux/bin/PKGBUILD"
+curl -O "https://raw.githubusercontent.com/ahbnr/chat/master/archlinux/bin/PKGBUILD"
 makepkg -s PKGBUILD
 sudo pacman -U chat*.pkg.tar.xz
 ```
@@ -105,7 +105,7 @@ sudo pacman -U chat*.pkg.tar.xz
 ### From source
 
 ```sh
-curl -O "https://raw.githubusercontent.com/ahbnr/chat/ircDiscovery/archlinux/git/PKGBUILD"
+curl -O "https://raw.githubusercontent.com/ahbnr/chat/master/archlinux/git/PKGBUILD"
 makepkg -s PKGBUILD
 sudo pacman -U chat*.pkg.tar.xz
 ```
