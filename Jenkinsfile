@@ -28,7 +28,7 @@ pipeline {
   }
   post {
     always {
-      sh 'mv ".stack-work/install/*/*/*/bin/chat" chat'
+      sh 'find .stack-work/install -name "chat" -print0 | xargs -r -0 ls -t | head -n 1 | xargs -I "{}" mv "{}" chat'
       archiveArtifacts artifacts: 'chat'
       archiveArtifacts artifacts: 'version'
     }
