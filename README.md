@@ -98,16 +98,14 @@ Packages for Arch Linux are also available:
 
 ```sh
 curl -O "https://raw.githubusercontent.com/ahbnr/chat/master/archlinux/bin/PKGBUILD"
-makepkg -s PKGBUILD
-sudo pacman -U chat*.pkg.tar.xz
+makepkg -sri PKGBUILD
 ```
 
 ### From source
 
 ```sh
 curl -O "https://raw.githubusercontent.com/ahbnr/chat/master/archlinux/git/PKGBUILD"
-makepkg -s PKGBUILD
-sudo pacman -U chat*.pkg.tar.xz
+makepkg -sri PKGBUILD
 ```
 
 ## TL;DR
